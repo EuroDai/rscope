@@ -17,11 +17,12 @@ flags.DEFINE_string('ssh_key', None, 'Path to SSH private key file')
 flags.DEFINE_integer(
     'polling_interval', 10, 'Interval in seconds for SSH file polling'
 )
+flags.DEFINE_string('path', None, 'Path to where we are looking for the rollouts.')
 
 
 def _main(argv):
   ssh_enabled = FLAGS.ssh_to is not None
-  main(ssh_enabled=ssh_enabled, polling_interval=FLAGS.polling_interval)
+  main(ssh_enabled=ssh_enabled, polling_interval=FLAGS.polling_interval, path=FLAGS.path)
 
 
 if __name__ == '__main__':

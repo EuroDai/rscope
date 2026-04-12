@@ -3,6 +3,7 @@
 from queue import Queue
 import threading
 import time
+from pathlib import Path
 
 from absl import app
 from absl import flags
@@ -22,7 +23,10 @@ from rscope.state import ViewerState
 import rscope.viewer_utils as vu
 
 
-def main(ssh_enabled=False, polling_interval=10):
+def main(ssh_enabled=False, polling_interval=10, path=None):
+  
+  if path is not None:
+    config.BASE_PATH = Path(path)
 
   # if BASE_PATH does not exist, make it
   if not config.BASE_PATH.exists():
@@ -91,6 +95,8 @@ def main(ssh_enabled=False, polling_interval=10):
   # Load the Mujoco model and data.
   mj_model, mj_data, meta = model_loader.load_model_and_data(ssh_enabled)
 
+  loop_cnt = 0
+
   with mujoco_viewer.launch_passive(
       mj_model,
       mj_data,
@@ -156,6 +162,7 @@ def main(ssh_enabled=False, polling_interval=10):
             text_1,
             text_2,
         )]
+
         if viewer_state.show_help:
           menu_text_1, menu_text_2 = vu.get_menu_text()
           overlays.append((
@@ -174,24 +181,26 @@ def main(ssh_enabled=False, polling_interval=10):
               "",
           ))
 
-        viewer.set_texts(overlays)
+        loop_cnt += 1
+        if loop_cnt % 2 == 0:
+          viewer.set_texts(overlays)
 
-        # Render figures (metrics).
-        if viewer_state.show_metrics:
-          if not viewer_state.pause:
-            cur_metrics = {
-                key: metrics[replay_index]
-                for key, metrics in cur_rollout.metrics.items()
-            }
-            for key in cur_metrics:
-              vu.add_data_to_fig(key, cur_metrics[key])
-          viewports = vu.get_viewports(
-              len(cur_rollout.metrics), viewer.viewport
-          )
-          viewport_figures = list(zip(viewports, list(vu.figures.values())))
-          viewer.set_figures(viewport_figures)
-        else:
-          viewer.clear_figures()
+          # Render figures (metrics).
+          if viewer_state.show_metrics:
+            if not viewer_state.pause:
+              cur_metrics = {
+                  key: metrics[replay_index]
+                  for key, metrics in cur_rollout.metrics.items()
+              }
+              for key in cur_metrics:
+                vu.add_data_to_fig(key, cur_metrics[key])
+            viewports = vu.get_viewports(
+                len(cur_rollout.metrics), viewer.viewport
+            )
+            viewport_figures = list(zip(viewports, list(vu.figures.values())))
+            viewer.set_figures(viewport_figures)
+          else:
+            viewer.clear_figures()
 
         # Render pixel observations if available.
         from collections.abc import Mapping
