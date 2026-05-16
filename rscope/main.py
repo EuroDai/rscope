@@ -24,9 +24,9 @@ import rscope.viewer_utils as vu
 
 
 def main(ssh_enabled=False, polling_interval=10, path=None):
-  
+
   if path is not None:
-    config.BASE_PATH = Path(path)
+    config.set_base_path(path)
 
   # if BASE_PATH does not exist, make it
   if not config.BASE_PATH.exists():

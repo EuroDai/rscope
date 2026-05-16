@@ -10,29 +10,64 @@ A light-weight package to collect and interactively visualize trajectories while
 > [!IMPORTANT]
 > - Requires Python 3.10 or later.
 
-`pip install rscope`
+```bash
+pip install rscope
+```
+
+For local development from a clone:
+
+```bash
+pip install -e .
+```
 
 ---
 
 ### Usage
 > [!IMPORTANT]
-> Mac users must run `mjpython` instead of python, ex. `mjpython -m rscope`
+> Mac users must run `mjpython` instead of `python`, e.g. `mjpython -m rscope`
 
 #### Local training runs
-To visualize locally stored rollouts:
+To visualize rollouts from the default active-run directory:
 
-`python -m rscope`
+```bash
+python -m rscope
+```
+
+By default, rscope reads from:
+
+- `/tmp/rscope/active_run`
+
+This directory is expected to contain:
+
+- `rscope_meta.pkl`
+- one or more `*.mj_unroll` rollout files
+
+#### Visualize old rollouts from a specific directory
+You can now point rscope at any rollout directory instead of only using `/tmp/rscope/active_run`:
+
+```bash
+python -m rscope --path /path/to/rollout_dir
+```
+
+This is useful if you have copied rollouts into an experiment directory such as:
+
+```text
+logs/<experiment>/checkpoints/rscope/
+```
 
 #### Remote training runs
-Below, **update user@remote_host**, for example alice@168.42.4.8.
+Below, **update `user@remote_host`**, for example `alice@168.42.4.8`.
 
 First, set up password-free key-based SSH connection with the remote device:
-```
+
+```bash
 ssh-keygen -t ed25519 -f ~/.ssh/rsync_key -N ""
 ssh-copy-id -i ~/.ssh/rsync_key.pub user@remote_host
 ```
+
 If this worked, you should be able to ssh in without using a password:
-```
+
+```bash
 ssh -i ~/.ssh/rsync_key user@remote_host
 echo hello
 exit
@@ -40,33 +75,81 @@ exit
 
 To visualize rollouts stored on a remote server via SSH:
 
-`python -m rscope --ssh_to user@remote_host[:port] --ssh_key ~/.ssh/rsync_key --polling_interval 5 # port defaults to 22`
+```bash
+python -m rscope --ssh_to user@remote_host[:port] --ssh_key ~/.ssh/rsync_key --polling_interval 5
+```
+
+> `port` defaults to `22`.
+
+---
+
+### Where rollout files are stored
+When used with the default local setup, rscope writes rollout files to:
+
+```text
+/tmp/rscope/
+├── active_run/
+│   ├── rscope_meta.pkl
+│   ├── 2026_05_16-12_26_53.mj_unroll
+│   ├── 2026_05_16-12_31_10.mj_unroll
+│   └── ...
+└── temp/
+    └── partial_transition.tmp
+```
+
+Notes:
+
+- `active_run/` holds the current set of rollout files that the viewer reads.
+- `temp/partial_transition.tmp` is an intermediate file used for atomic writes.
+- Each `*.mj_unroll` file contains one saved rollout across all selected `rscope_envs`; it is **not** one file per environment.
+- `rscope_init()` clears the active run directory at the start of a new run.
+
+---
+
+### Rollout ordering
+Rollouts are ordered chronologically by filename timestamp.
+
+- Existing local rollouts are loaded in sorted filename order.
+- Newly discovered rollouts are inserted into the in-memory list in sorted filename order.
+- Remote SSH polling also sorts newly discovered rollout filenames before loading them.
+
+Filename format:
+
+```text
+YYYY_MM_DD-HH_MM_SS.mj_unroll
+```
+
+This means the viewer shows rollouts from oldest to newest.
 
 ---
 
 ### Features
 
-1. Most features from [Mujoco viewer](https://mujoco.readthedocs.io/en/stable/programming/samples.html#sasimulate)
-2. Browse through trajectories. Use left/right arrow keys to switch through parallel environments and up/down for recent/past trajectories.
-3. Live Plotting. Use `SHIFT+M` to plot trajectory rewards and the contents of `state.metrics`, up to the first 11 keys.
-4. Pixel Observations. Use `SHIFT+O` to overlay pixel observations if available. To use this feature, the observation must be a `dict` and the pixel keys must be prefixed with `pixels/`.
+1. Most features from [MuJoCo viewer](https://mujoco.readthedocs.io/en/stable/programming/samples.html#sasimulate)
+2. Browse through trajectories. Use left/right arrow keys to switch through parallel environments and up/down for newer/older trajectories.
+3. Live plotting. Use `SHIFT+M` to plot trajectory rewards and the contents of `state.metrics`.
+4. Pixel observations. Use `SHIFT+O` to overlay pixel observations if available. To use this feature, the observation must be a `dict` and the pixel keys must be prefixed with `pixels/`.
 
 ---
+
 ### Sharp bits
 
-Some background on how rscope works: between policy updates, `rscope` unrolls multiple trajectories in parallel then visualizes them on CPU. While this is simpler to implement and less expensive than tracing *training* runs like in IsaacLab, this and other implementation details lead to some unexpected gotchas:
-- Typically, stochastic policies are used for evaluating training progress while determinsitic ones are deployed. While you can use rscope on stochastic policies to get a feel for the agent's training exploration, we recommend [deterministic evals](https://github.com/google/brax/blob/main/brax/training/agents/ppo/train.py#L232).
+Some background on how rscope works: between policy updates, `rscope` unrolls multiple trajectories in parallel and then visualizes them on CPU. While this is simpler to implement and less expensive than tracing *training* runs like in IsaacLab, this and other implementation details lead to some unexpected gotchas:
+
+- Typically, stochastic policies are used for evaluating training progress while deterministic ones are deployed. While you can use rscope on stochastic policies to get a feel for the agent's training exploration, we recommend [deterministic evals](https://github.com/google/brax/blob/main/brax/training/agents/ppo/train.py#L232).
 - Renders incorrectly for domain-randomized training because the loaded assets are from the nominal model definition.
-- Plots only the first 14 keys in the metrics without filtering for shaping rewards.
-- Visualizes only the first 14 pixel observations.
+- Plots only a limited number of metric keys and does not automatically filter shaping rewards.
+- Visualizes only a limited number of pixel observations.
 - Cannot capture curriculum progression during training, as curriculums depend on `state.info`, which is reset at the start of an evaluator run.
 - Currently supports only PPO-based training.
 
 ---
-#### Contribution Guidelines:
+
+### Contribution Guidelines
 
 Please run the following before making a PR:
-```
+
+```bash
 pip install -e ".[dev]"
 pre-commit install
 pre-commit run --all-files

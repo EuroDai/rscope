@@ -1,5 +1,6 @@
 """Rollout utilities."""
 
+from bisect import bisect_right
 from pathlib import Path
 import pickle
 from typing import Dict, List, NamedTuple, Union
@@ -23,6 +24,7 @@ class Rollout(NamedTuple):
 
 # Global rollout state.
 rollouts: List[Rollout] = []
+rollout_names: List[str] = []
 num_evals = 0
 num_envs = 0
 env_ctrl_dt = 0.0
@@ -33,33 +35,44 @@ def get_num_evals():
   return num_evals
 
 
-def append_unroll(fpath: Union[str, Path]):
-  """Load an unroll file and append it to the list of rollouts."""
-  logging.info(f'Loading unroll: {fpath}')
+def _update_metadata(rollout: Rollout):
   global num_evals, num_envs, env_ctrl_dt, change_rollout
-  with open(fpath, 'rb') as f:
-    rollout = pickle.load(f)
-  rollouts.append(rollout)
-
-  assert rollout.qpos.shape[:2] == rollout.qvel.shape[:2], (
-      'qpos and qvel non-matching time or envs dimension:'
-      f' {rollout.qpos.shape} vs {rollout.qvel.shape}'
-  )
-
   num_envs = rollout.qpos.shape[1]
-  num_evals += 1
+  num_evals = len(rollouts)
   # TODO: this is wrong when it resets on timestep 1.
   env_ctrl_dt = rollout.time[1, 0] - rollout.time[0, 0]
   if len(rollouts) == 1:
     change_rollout = True
 
 
+def append_unroll(fpath: Union[str, Path]):
+  """Load an unroll file and insert it into the list in filename order."""
+  logging.info(f'Loading unroll: {fpath}')
+  fpath = Path(fpath)
+  fname = fpath.name
+  if fname in rollout_names:
+    return
+
+  with open(fpath, 'rb') as f:
+    rollout = pickle.load(f)
+
+  assert rollout.qpos.shape[:2] == rollout.qvel.shape[:2], (
+      'qpos and qvel non-matching time or envs dimension:'
+      f' {rollout.qpos.shape} vs {rollout.qvel.shape}'
+  )
+
+  insert_idx = bisect_right(rollout_names, fname)
+  rollout_names.insert(insert_idx, fname)
+  rollouts.insert(insert_idx, rollout)
+  _update_metadata(rollout)
+
+
 def load_all_local_unrolls(base_path: Union[str, Path]) -> List[str]:
   """Load all existing unroll files from base_path into rollouts."""
   base = Path(base_path)
-  unroll_files = [
+  unroll_files = sorted(
       f.name for f in base.iterdir() if f.name.endswith('.mj_unroll')
-  ]
+  )
   for fname in unroll_files:
     append_unroll(base / fname)
   return unroll_files
