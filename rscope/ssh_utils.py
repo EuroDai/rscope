@@ -1,3 +1,4 @@
+import getpass
 import os
 from queue import Empty
 from queue import Queue
@@ -13,25 +14,48 @@ import rscope.config as config
 
 # Get access to flags
 FLAGS = flags.FLAGS
+_PASSWORD_CACHE = {}
 
 
-def ssh_connect(ssh):
-  ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-  # Parse ssh_to string (username@host[:port])
+def _parse_ssh_target():
   ssh_to = FLAGS.ssh_to
   if "@" in ssh_to:
     username, host_port = ssh_to.split("@", 1)
   else:
-    username = None
+    username = getpass.getuser()
     host_port = ssh_to
 
-  # Parse optional port
   if ":" in host_port:
-    host, port_str = host_port.split(":", 1)
+    host, port_str = host_port.rsplit(":", 1)
     port = int(port_str)
   else:
     host = host_port
-    port = 22  # Default SSH port
+    port = 22
+
+  return username, host, port
+
+
+def _get_ssh_auth(username, host, port):
+  if FLAGS.ssh_key:
+    return {"key_filename": os.path.expanduser(FLAGS.ssh_key)}
+
+  cache_key = (username, host, port)
+  if cache_key not in _PASSWORD_CACHE:
+    _PASSWORD_CACHE[cache_key] = getpass.getpass(
+        prompt=f"SSH password for {username}@{host}: "
+    )
+
+  return {
+      "password": _PASSWORD_CACHE[cache_key],
+      "look_for_keys": False,
+      "allow_agent": False,
+  }
+
+
+def ssh_connect(ssh):
+  ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+  username, host, port = _parse_ssh_target()
+  connect_kwargs = _get_ssh_auth(username, host, port)
 
   # Connect using parsed values with timeout
   try:
@@ -39,9 +63,12 @@ def ssh_connect(ssh):
         host,
         port=port,
         username=username,
-        key_filename=os.path.expanduser(FLAGS.ssh_key),
         timeout=10,
+        **connect_kwargs,
     )
+  except paramiko.AuthenticationException as e:
+    logging.error(f"SSH authentication failed: {e}")
+    exit(1)
   except paramiko.SSHException as e:
     logging.error(f"SSH connection failed: {e}")
     exit(1)
@@ -79,7 +106,7 @@ class SSHFileWatcher(threading.Thread):
     sftp = ssh.open_sftp()
     try:
       while not self.stop_event.is_set():
-        remote_files = sorted(sftp.listdir(str(config.BASE_PATH)))
+        remote_files = sorted(sftp.listdir(str(config.REMOTE_BASE_PATH)))
         new_files = [
             f
             for f in remote_files
@@ -124,7 +151,7 @@ class SSHFileTransfer(threading.Thread):
           fname = self.file_queue.get(timeout=1)
           logging.info(f"Transferring eval: {fname}")
 
-          remote_path = str(config.BASE_PATH / fname)
+          remote_path = str(config.REMOTE_BASE_PATH / fname)
           tmp_local_path = str(config.TEMP_PATH / f".tmp_{fname}")
           final_local_path = str(config.BASE_PATH / fname)
 

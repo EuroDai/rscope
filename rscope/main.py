@@ -1,6 +1,7 @@
 """Rscope main script."""
 
 from queue import Queue
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -23,10 +24,14 @@ from rscope.state import ViewerState
 import rscope.viewer_utils as vu
 
 
-def main(ssh_enabled=False, polling_interval=10, path=None):
+def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
 
   if path is not None:
     config.set_base_path(path)
+  if ssh_enabled:
+    config.set_remote_base_path(
+        remote_path if remote_path is not None else config.BASE_PATH
+    )
 
   # if BASE_PATH does not exist, make it
   if not config.BASE_PATH.exists():
@@ -39,7 +44,9 @@ def main(ssh_enabled=False, polling_interval=10, path=None):
 
   if ssh_enabled:
     logging.info(
-        f"SSH file watching enabled with polling interval: {polling_interval}s"
+        "SSH file watching enabled with polling interval:"
+        f" {polling_interval}s; remote path: {config.REMOTE_BASE_PATH};"
+        f" local cache: {config.BASE_PATH}"
     )
 
     file_queue = Queue()
@@ -57,7 +64,10 @@ def main(ssh_enabled=False, polling_interval=10, path=None):
     # Delete all existing files in the base path to prevent duplication.
     for file in config.BASE_PATH.glob("*"):
       try:
-        file.unlink()
+        if file.is_dir():
+          shutil.rmtree(file)
+        else:
+          file.unlink()
       except Exception as e:
         logging.error(f"Error deleting {file}: {e}")
 

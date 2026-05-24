@@ -11,18 +11,30 @@ from rscope.main import main
 # Configure absl flags
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
-    'ssh_to', None, 'SSH connection string in the format username@host[:port]'
+    'ssh_to', None, 'SSH connection string in the format [username@]host[:port]'
 )
-flags.DEFINE_string('ssh_key', None, 'Path to SSH private key file')
+flags.DEFINE_string(
+    'ssh_key', None, 'Path to SSH private key file; prompts for password if omitted'
+)
 flags.DEFINE_integer(
     'polling_interval', 10, 'Interval in seconds for SSH file polling'
 )
-flags.DEFINE_string('path', None, 'Path to where we are looking for the rollouts.')
+flags.DEFINE_string(
+    'path', None, 'Path to local rollout directory or SSH cache directory.'
+)
+flags.DEFINE_string(
+    'remote_path', None, 'Path to remote rollout directory when using SSH.'
+)
 
 
 def _main(argv):
   ssh_enabled = FLAGS.ssh_to is not None
-  main(ssh_enabled=ssh_enabled, polling_interval=FLAGS.polling_interval, path=FLAGS.path)
+  main(
+      ssh_enabled=ssh_enabled,
+      polling_interval=FLAGS.polling_interval,
+      path=FLAGS.path,
+      remote_path=FLAGS.remote_path,
+  )
 
 
 if __name__ == '__main__':

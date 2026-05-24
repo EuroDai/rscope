@@ -58,7 +58,7 @@ logs/<experiment>/checkpoints/rscope/
 #### Remote training runs
 Below, **update `user@remote_host`**, for example `alice@168.42.4.8`.
 
-First, set up password-free key-based SSH connection with the remote device:
+If you want key-based SSH, first set up a password-free key-based SSH connection with the remote device:
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/rsync_key -N ""
@@ -73,10 +73,36 @@ echo hello
 exit
 ```
 
-To visualize rollouts stored on a remote server via SSH:
+To visualize rollouts stored on a remote server via SSH with a private key:
 
 ```bash
 python -m rscope --ssh_to user@remote_host[:port] --ssh_key ~/.ssh/rsync_key --polling_interval 5
+```
+
+If the remote rollout directory is not the default `/tmp/rscope/active_run`, pass it separately:
+
+```bash
+python -m rscope \
+  --ssh_to user@remote_host[:port] \
+  --ssh_key ~/.ssh/rsync_key \
+  --remote_path /path/to/remote/rollouts \
+  --polling_interval 5
+```
+
+If you also want to change the local SSH cache directory, use `--path` for the local cache and `--remote_path` for the remote rollout directory:
+
+```bash
+python -m rscope \
+  --ssh_to user@remote_host[:port] \
+  --path /tmp/my-local-rscope-cache \
+  --remote_path /path/to/remote/rollouts \
+  --polling_interval 5
+```
+
+If you do not pass `--ssh_key`, `rscope` prompts once in the terminal for the SSH password and reuses it for subsequent connections:
+
+```bash
+python -m rscope --ssh_to [user@]remote_host[:port] --polling_interval 5
 ```
 
 > `port` defaults to `22`.
