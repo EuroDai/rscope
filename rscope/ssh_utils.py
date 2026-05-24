@@ -15,6 +15,7 @@ import rscope.config as config
 # Get access to flags
 FLAGS = flags.FLAGS
 _PASSWORD_CACHE = {}
+_PASSWORD_CACHE_LOCK = threading.Lock()
 
 
 def _parse_ssh_target():
@@ -40,16 +41,26 @@ def _get_ssh_auth(username, host, port):
     return {"key_filename": os.path.expanduser(FLAGS.ssh_key)}
 
   cache_key = (username, host, port)
-  if cache_key not in _PASSWORD_CACHE:
-    _PASSWORD_CACHE[cache_key] = getpass.getpass(
-        prompt=f"SSH password for {username}@{host}: "
-    )
+  with _PASSWORD_CACHE_LOCK:
+    if cache_key not in _PASSWORD_CACHE:
+      _PASSWORD_CACHE[cache_key] = getpass.getpass(
+          prompt=f"SSH password for {username}@{host}: "
+      )
+    password = _PASSWORD_CACHE[cache_key]
 
   return {
-      "password": _PASSWORD_CACHE[cache_key],
+      "password": password,
       "look_for_keys": False,
       "allow_agent": False,
   }
+
+
+def prime_ssh_password_cache():
+  if FLAGS.ssh_key:
+    return
+
+  username, host, port = _parse_ssh_target()
+  _get_ssh_auth(username, host, port)
 
 
 def ssh_connect(ssh):
@@ -106,7 +117,17 @@ class SSHFileWatcher(threading.Thread):
     sftp = ssh.open_sftp()
     try:
       while not self.stop_event.is_set():
-        remote_files = sorted(sftp.listdir(str(config.REMOTE_BASE_PATH)))
+        try:
+          remote_files = sorted(sftp.listdir(str(config.REMOTE_BASE_PATH)))
+        except FileNotFoundError:
+          logging.warning(
+              "Remote rollout directory not found yet: %s",
+              config.REMOTE_BASE_PATH,
+          )
+          self.poll_event.wait(self.polling_interval)
+          self.poll_event.clear()
+          continue
+
         new_files = [
             f
             for f in remote_files
@@ -152,6 +173,7 @@ class SSHFileTransfer(threading.Thread):
           logging.info(f"Transferring eval: {fname}")
 
           remote_path = str(config.REMOTE_BASE_PATH / fname)
+          config.TEMP_PATH.mkdir(parents=True, exist_ok=True)
           tmp_local_path = str(config.TEMP_PATH / f".tmp_{fname}")
           final_local_path = str(config.BASE_PATH / fname)
 

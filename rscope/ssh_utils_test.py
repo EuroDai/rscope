@@ -82,8 +82,7 @@ class SSHUtilsTest(absltest.TestCase):
     config.BASE_PATH = Path(self.local_temp_dir)
     config.TEMP_PATH = Path(self.local_temp_dir)
     config.META_PATH = config.BASE_PATH / "rscope_meta.pkl"
-    config.REMOTE_BASE_PATH = Path("/remote/rollouts")
-    config.REMOTE_META_PATH = config.REMOTE_BASE_PATH / "rscope_meta.pkl"
+    config.set_remote_base_path("/remote/rollouts")
 
     # Set up the SSH client mock
     self.mock_ssh_instance = MockSSHClient(self.remote_temp_dir)
@@ -148,6 +147,31 @@ class SSHUtilsTest(absltest.TestCase):
     ssh_utils.ssh_connect(second_ssh)
     self.assertEqual(mock_getpass.call_count, 1)
 
+  @flagsaver.flagsaver(ssh_to="127.0.0.1:8080", ssh_key=None)
+  @mock.patch("rscope.ssh_utils.getpass.getpass", return_value="secret")
+  @mock.patch("rscope.ssh_utils.getpass.getuser", return_value="localuser")
+  def test_prime_ssh_password_cache_prompts_before_connections(
+      self, mock_getuser, mock_getpass
+  ):
+    ssh_utils.prime_ssh_password_cache()
+
+    ssh = mock.Mock()
+    ssh_utils.ssh_connect(ssh)
+
+    mock_getpass.assert_called_once_with(
+        prompt="SSH password for localuser@127.0.0.1: "
+    )
+    ssh.connect.assert_called_once_with(
+        "127.0.0.1",
+        port=8080,
+        username="localuser",
+        timeout=10,
+        password="secret",
+        look_for_keys=False,
+        allow_agent=False,
+    )
+    self.assertGreaterEqual(mock_getuser.call_count, 1)
+
   @mock.patch("rscope.ssh_utils.ssh_connect")
   def test_remote_base_path_is_used_for_ssh_file_operations(self, _):
     self.mock_ssh_instance.sftp.listdir_calls.clear()
@@ -185,6 +209,34 @@ class SSHUtilsTest(absltest.TestCase):
     )
     self.assertTrue((config.BASE_PATH / filename).exists())
 
+  @mock.patch("rscope.ssh_utils.ssh_connect")
+  def test_transfer_recreates_missing_temp_directory(self, _):
+    filename = "needs_temp_dir.mj_unroll"
+    with open(os.path.join(self.remote_temp_dir, filename), "w") as f:
+      f.write("temp dir recovered")
+
+    config.TEMP_PATH = config.BASE_PATH / ".tmp"
+
+    file_queue = Queue()
+    file_queue.put(filename)
+    stop_event = threading.Event()
+
+    transfer_thread = SSHFileTransfer(file_queue, stop_event)
+    shutil.rmtree(config.TEMP_PATH)
+
+    transfer_thread.start()
+    time.sleep(0.3)
+    stop_event.set()
+    transfer_thread.join(timeout=1)
+
+    local_path = os.path.join(self.local_temp_dir, filename)
+    self.assertTrue(
+        os.path.exists(local_path), f"File {filename} was not transferred"
+    )
+    with open(local_path, "r") as f:
+      content = f.read()
+    self.assertEqual(content, "temp dir recovered")
+
   @mock.patch("rscope.model_loader.mujoco.MjData", return_value=mock.sentinel.mj_data)
   @mock.patch(
       "rscope.model_loader.mujoco.MjModel.from_xml_string",
@@ -211,6 +263,17 @@ class SSHUtilsTest(absltest.TestCase):
     self.assertIn(
         (str(config.REMOTE_META_PATH), str(config.META_PATH)),
         self.mock_ssh_instance.sftp.get_calls,
+    )
+
+  def test_set_remote_base_path_preserves_posix_separators(self):
+    config.set_remote_base_path("/home/handcraft/learning/rscope/")
+
+    self.assertEqual(
+        str(config.REMOTE_BASE_PATH), "/home/handcraft/learning/rscope"
+    )
+    self.assertEqual(
+        str(config.REMOTE_META_PATH),
+        "/home/handcraft/learning/rscope/rscope_meta.pkl",
     )
 
   def test_existing_files(self):
@@ -262,6 +325,49 @@ class SSHUtilsTest(absltest.TestCase):
 
       # Verify known_files set contains all test files
       self.assertEqual(known_files, set(test_files))
+
+  def test_watcher_retries_when_remote_directory_is_missing(self):
+    with mock.patch("rscope.ssh_utils.ssh_connect"):
+      filename = "recovered.mj_unroll"
+      with open(os.path.join(self.remote_temp_dir, filename), "w") as f:
+        f.write("recovered content")
+
+      listdir_calls = {"count": 0}
+
+      def listdir_side_effect(path):
+        listdir_calls["count"] += 1
+        if listdir_calls["count"] == 1:
+          raise FileNotFoundError()
+        return [filename]
+
+      self.mock_ssh_instance.sftp.listdir = mock.Mock(side_effect=listdir_side_effect)
+
+      file_queue = Queue()
+      known_files = set()
+      stop_event = threading.Event()
+
+      watcher_thread = SSHFileWatcher(
+          file_queue, known_files, stop_event, polling_interval=0.1
+      )
+      transfer_thread = SSHFileTransfer(file_queue, stop_event)
+
+      watcher_thread.start()
+      transfer_thread.start()
+
+      time.sleep(0.5)
+
+      stop_event.set()
+      watcher_thread.join(timeout=1)
+      transfer_thread.join(timeout=1)
+
+      local_path = os.path.join(self.local_temp_dir, filename)
+      self.assertTrue(
+          os.path.exists(local_path), f"File {filename} was not transferred"
+      )
+      with open(local_path, "r") as f:
+        content = f.read()
+      self.assertEqual(content, "recovered content")
+      self.assertGreaterEqual(listdir_calls["count"], 2)
 
   def test_trickling_files(self):
     """Test that files added over time are discovered and transferred."""

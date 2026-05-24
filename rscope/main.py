@@ -20,6 +20,7 @@ import rscope.model_loader as model_loader
 import rscope.rollout as rollout
 from rscope.ssh_utils import SSHFileTransfer
 from rscope.ssh_utils import SSHFileWatcher
+from rscope.ssh_utils import prime_ssh_password_cache
 from rscope.state import ViewerState
 import rscope.viewer_utils as vu
 
@@ -48,18 +49,7 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
         f" {polling_interval}s; remote path: {config.REMOTE_BASE_PATH};"
         f" local cache: {config.BASE_PATH}"
     )
-
-    file_queue = Queue()
-    known_files = set()
-    stop_event = threading.Event()
-
-    watcher_thread = SSHFileWatcher(
-        file_queue, known_files, stop_event, polling_interval=polling_interval
-    )
-    transfer_thread = SSHFileTransfer(file_queue, stop_event, viewer_state)
-
-    watcher_thread.start()
-    transfer_thread.start()
+    prime_ssh_password_cache()
 
     # Delete all existing files in the base path to prevent duplication.
     for file in config.BASE_PATH.glob("*"):
@@ -70,6 +60,15 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
           file.unlink()
       except Exception as e:
         logging.error(f"Error deleting {file}: {e}")
+
+    file_queue = Queue()
+    known_files = set()
+    stop_event = threading.Event()
+
+    watcher_thread = SSHFileWatcher(
+        file_queue, known_files, stop_event, polling_interval=polling_interval
+    )
+    transfer_thread = SSHFileTransfer(file_queue, stop_event, viewer_state)
 
   # Setup file system observer.
   event_handler_instance = event_handler.MjUnrollHandler()
@@ -82,8 +81,10 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
   except Exception as e:
     logging.error(f"Error starting observer: {e}")
 
-  if not ssh_enabled:
-    # Duplicates in the case of ssh_enabled.
+  if ssh_enabled:
+    watcher_thread.start()
+    transfer_thread.start()
+  else:
     rollout.load_all_local_unrolls(config.BASE_PATH)
 
   # Wait for new rollouts to trickle in.

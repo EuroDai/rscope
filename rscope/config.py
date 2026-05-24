@@ -1,11 +1,12 @@
 """Rscope configuration."""
 
 from pathlib import Path
+from pathlib import PurePosixPath
 
 BASE_PATH = Path("/tmp/rscope/active_run")
 TEMP_PATH = Path("/tmp/rscope/temp")
 META_PATH = BASE_PATH / "rscope_meta.pkl"
-REMOTE_BASE_PATH = BASE_PATH
+REMOTE_BASE_PATH = PurePosixPath(BASE_PATH.as_posix())
 REMOTE_META_PATH = REMOTE_BASE_PATH / "rscope_meta.pkl"
 
 
@@ -20,5 +21,6 @@ def set_base_path(path: str | Path):
 def set_remote_base_path(path: str | Path):
   """Update all paths derived from the remote rollout directory."""
   global REMOTE_BASE_PATH, REMOTE_META_PATH
-  REMOTE_BASE_PATH = Path(path)
+  remote_path = path.as_posix() if isinstance(path, Path) else str(path)
+  REMOTE_BASE_PATH = PurePosixPath(remote_path)
   REMOTE_META_PATH = REMOTE_BASE_PATH / "rscope_meta.pkl"
