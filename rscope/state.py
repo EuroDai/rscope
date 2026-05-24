@@ -20,6 +20,7 @@ class ViewerState:
   def __init__(self):
     self.cur_eval = 0
     self.cur_env = 0
+    self.cur_metric_page = 0
     self.change_rollout = True
     self.pause = False
     self.show_metrics = False
@@ -33,15 +34,19 @@ class ViewerState:
   def key_callback(self, keycode):
     if keycode == glfw.KEY_RIGHT:
       self.change_rollout = True
+      self.cur_metric_page = 0
       self.cur_env += 1
     elif keycode == glfw.KEY_LEFT:
       self.change_rollout = True
+      self.cur_metric_page = 0
       self.cur_env -= 1
     elif keycode == glfw.KEY_UP:
       self.change_rollout = True
+      self.cur_metric_page = 0
       self.cur_eval += 1
     elif keycode == glfw.KEY_DOWN:
       self.change_rollout = True
+      self.cur_metric_page = 0
       self.cur_eval -= 1
     else:
       try:
@@ -54,6 +59,10 @@ class ViewerState:
           self.pause = not self.pause
         elif char == "H":
           self.show_help = not self.show_help
+        elif char == "Q":
+          self.cur_metric_page -= 1
+        elif char == "E":
+          self.cur_metric_page += 1
         elif char == "-":
           self.speed_index = min(
               len(self.SPEED_PERCENTAGES) - 1, self.speed_index + 1

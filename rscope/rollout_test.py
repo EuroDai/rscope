@@ -167,6 +167,54 @@ class RolloutTest(absltest.TestCase):
         metrics_env['metric3'], metrics['metric3'][:, 1]
     )
 
+  def test_get_num_metric_pages(self):
+    self.assertEqual(0, rollout.get_num_metric_pages({}))
+
+    fewer_than_page = {
+        f'metric{i}': np.random.rand(10, 3)
+        for i in range(rollout.MAX_VIEWPORTS - 1)
+    }
+    exactly_one_page = {
+        f'metric{i}': np.random.rand(10, 3)
+        for i in range(rollout.MAX_VIEWPORTS)
+    }
+    more_than_one_page = {
+        f'metric{i}': np.random.rand(10, 3)
+        for i in range(rollout.MAX_VIEWPORTS + 2)
+    }
+
+    self.assertEqual(1, rollout.get_num_metric_pages(fewer_than_page))
+    self.assertEqual(1, rollout.get_num_metric_pages(exactly_one_page))
+    self.assertEqual(2, rollout.get_num_metric_pages(more_than_one_page))
+
+  def test_metrics_page_select(self):
+    metrics = {
+        f'metric{i}': np.full((10, 3), i)
+        for i in range(rollout.MAX_VIEWPORTS + 2)
+    }
+
+    first_page = rollout.metrics_page_select(metrics, 0)
+    second_page = rollout.metrics_page_select(metrics, 1)
+    wrapped_page = rollout.metrics_page_select(metrics, 3)
+
+    self.assertLen(first_page, rollout.MAX_VIEWPORTS)
+    self.assertListEqual(
+        list(first_page.keys()),
+        [f'metric{i}' for i in range(rollout.MAX_VIEWPORTS)],
+    )
+
+    self.assertLen(second_page, 2)
+    self.assertListEqual(
+        list(second_page.keys()),
+        [f'metric{i}' for i in range(rollout.MAX_VIEWPORTS, rollout.MAX_VIEWPORTS + 2)],
+    )
+    np.testing.assert_array_equal(
+        second_page[f'metric{rollout.MAX_VIEWPORTS}'],
+        metrics[f'metric{rollout.MAX_VIEWPORTS}'],
+    )
+
+    self.assertListEqual(list(wrapped_page.keys()), list(second_page.keys()))
+
 
 if __name__ == '__main__':
   absltest.main()

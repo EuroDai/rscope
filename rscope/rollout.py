@@ -113,3 +113,24 @@ def dict_obs_t_select(obs: Dict, t: int) -> Dict:
 def metrics_env_select(metrics: Dict, i_env: int) -> Dict:
   """Select column i_env from each metric."""
   return {key: metrics[key][:, i_env] for key in metrics.keys()}
+
+
+def get_num_metric_pages(metrics: Dict, page_size: int = MAX_VIEWPORTS) -> int:
+  """Return the number of metric pages needed for display."""
+  if not metrics:
+    return 0
+  return (len(metrics) + page_size - 1) // page_size
+
+
+def metrics_page_select(
+    metrics: Dict, page: int, page_size: int = MAX_VIEWPORTS
+) -> Dict:
+  """Select one page of metrics while preserving key order."""
+  num_pages = get_num_metric_pages(metrics, page_size)
+  if not num_pages:
+    return {}
+  page = page % num_pages
+  start = page * page_size
+  end = start + page_size
+  keys = list(metrics.keys())[start:end]
+  return {key: metrics[key] for key in keys}

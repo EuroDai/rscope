@@ -86,7 +86,9 @@ def main(ssh_enabled=False, polling_interval=10, path=None):
   )
 
   # Initialize figures using metrics keys from the first rollout.
-  metrics_keys = list(rollout.rollouts[0].metrics.keys())
+  metrics_keys = vu.get_ordered_metric_keys(
+      list(rollout.rollouts[0].metrics.keys())
+  )
   vu.reset_figures(metrics_keys)
 
   # Determine the initial replay length.
@@ -110,9 +112,12 @@ def main(ssh_enabled=False, polling_interval=10, path=None):
 
       # Trajectory selection: if a new rollout is requested.
       if viewer_state.change_rollout:
-        vu.reset_figures(metrics_keys)
         viewer_state.change_rollout = False
         full_rollout = rollout.rollouts[viewer_state.cur_eval]
+        metrics_keys = vu.get_ordered_metric_keys(
+            list(full_rollout.metrics.keys())
+        )
+        vu.reset_figures(metrics_keys)
         if isinstance(full_rollout.obs, dict):
           obs = rollout.dict_obs_pixels_env_select(
               full_rollout.obs, viewer_state.cur_env
@@ -147,12 +152,31 @@ def main(ssh_enabled=False, polling_interval=10, path=None):
             viewer_state.transfer_status = None
             viewer_state.transfer_until = None
 
+        metrics_keys = vu.get_ordered_metric_keys(list(cur_rollout.metrics.keys()))
+        ordered_metrics = {
+            key: cur_rollout.metrics[key] for key in metrics_keys
+        }
+        num_metric_pages = rollout.get_num_metric_pages(
+            ordered_metrics, vu.MAX_VIEWPORTS
+        )
+        if num_metric_pages:
+          viewer_state.cur_metric_page %= num_metric_pages
+          metric_status = (
+              f"{viewer_state.cur_metric_page + 1}/{num_metric_pages}"
+              if viewer_state.show_metrics
+              else "off"
+          )
+        else:
+          viewer_state.cur_metric_page = 0
+          metric_status = "0/0" if viewer_state.show_metrics else "off"
+
         # Overlay text.
-        text_1 = "Eval\nEnv\nStep\nStatus\nSpeed"
+        text_1 = "Eval\nEnv\nStep\nMetrics\nStatus\nSpeed"
         text_2 = (
             f"{viewer_state.cur_eval+1}/{len(rollout.rollouts)}\n"
             f"{viewer_state.cur_env+1}/{rollout.num_envs}\n"
             f"{replay_index}\n"
+            f"{metric_status}\n"
         )
         text_2 += "Pause" if viewer_state.pause else "Play"
         text_2 += f"\n{viewer_state.playback_speed * 100:.1f}%"
@@ -188,17 +212,22 @@ def main(ssh_enabled=False, polling_interval=10, path=None):
           # Render figures (metrics).
           if viewer_state.show_metrics:
             if not viewer_state.pause:
-              cur_metrics = {
-                  key: metrics[replay_index]
-                  for key, metrics in cur_rollout.metrics.items()
-              }
-              for key in cur_metrics:
-                vu.add_data_to_fig(key, cur_metrics[key])
-            viewports = vu.get_viewports(
-                len(cur_rollout.metrics), viewer.viewport
+              for key, metrics in ordered_metrics.items():
+                vu.add_data_to_fig(key, metrics[replay_index])
+            cur_metrics = rollout.metrics_page_select(
+                ordered_metrics,
+                viewer_state.cur_metric_page,
+                vu.MAX_VIEWPORTS,
             )
-            viewport_figures = list(zip(viewports, list(vu.figures.values())))
-            viewer.set_figures(viewport_figures)
+            viewports = vu.get_viewports(len(cur_metrics), viewer.viewport)
+            viewport_figures = [
+                (viewport, vu.figures[key])
+                for key, viewport in zip(cur_metrics.keys(), viewports)
+            ]
+            if viewport_figures:
+              viewer.set_figures(viewport_figures)
+            else:
+              viewer.clear_figures()
           else:
             viewer.clear_figures()
 

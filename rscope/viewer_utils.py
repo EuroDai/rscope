@@ -10,15 +10,32 @@ gridsize = [3, 4]
 figures = {}
 
 
+def _format_metric_value(data):
+  """Format the current metric value for figure display."""
+  value = float(np.asarray(data))
+  if np.isfinite(value):
+    return f'{value:>10.4g}'
+  return f'{value:>10}'
+
+
 def get_menu_text():
   text_1 = (
-      'SHIFT + M\nSHIFT + O\nSPACE\nRIGHT/LEFT\nUP/DOWN\nSHIFT + H\nTAB\n-/+'
+      'SHIFT + M\nSHIFT + O\nSPACE\nRIGHT/LEFT\nUP/DOWN\nQ/E\nSHIFT + H\nTAB\n-/+'
   )
   text_2 = (
       'Toggle metrics\nToggle pixel obs\nPause/play\nNext/prev env\nNext/prev'
-      ' eval\nToggle help\nToggle left UI\nSpeed down/up'
+      ' eval\nPrev/next metric page\nToggle help\nToggle left UI\nSpeed down/up'
   )
   return text_1, text_2
+
+
+def get_ordered_metric_keys(metrics_keys_list):
+  """Return metric keys in display order."""
+  metrics_keys = metrics_keys_list.copy()
+  if 'reward' in metrics_keys:
+    metrics_keys.remove('reward')
+    metrics_keys.insert(0, 'reward')
+  return metrics_keys
 
 
 def get_viewports(num_viewports: int, viewer_rect: mujoco.MjrRect):
@@ -49,11 +66,8 @@ def get_viewports(num_viewports: int, viewer_rect: mujoco.MjrRect):
 def reset_figures(metrics_keys_list):
   """Initialize/reset figures for each metric."""
   global figures
-  metrics_keys = metrics_keys_list.copy()
-  if 'reward' in metrics_keys:
-    # Ensure that 'reward' appears first.
-    metrics_keys.remove('reward')
-    metrics_keys.insert(0, 'reward')
+  metrics_keys = get_ordered_metric_keys(metrics_keys_list)
+  figures = {}
   for key in metrics_keys:
     fig = mujoco.MjvFigure()
     mujoco.mjv_defaultFigure(fig)
@@ -70,6 +84,7 @@ def reset_figures(metrics_keys_list):
 def add_data_to_fig(metric_key, data):
   """Add a new data point to the figure for a given metric."""
   fig = figures[metric_key]
+  fig.linename[0] = _format_metric_value(data)
   pnt = min(MAX_LINE_POINTS, fig.linepnt[0] + 1)
   for i in range(pnt - 1, 0, -1):
     fig.linedata[0][2 * i + 1] = fig.linedata[0][2 * i - 1]

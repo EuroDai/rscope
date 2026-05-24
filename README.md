@@ -127,7 +127,7 @@ This means the viewer shows rollouts from oldest to newest.
 
 1. Most features from [MuJoCo viewer](https://mujoco.readthedocs.io/en/stable/programming/samples.html#sasimulate)
 2. Browse through trajectories. Use left/right arrow keys to switch through parallel environments and up/down for newer/older trajectories.
-3. Live plotting. Use `SHIFT+M` to plot trajectory rewards and the contents of `state.metrics`.
+3. Live plotting. Use `SHIFT+M` to plot trajectory rewards and the contents of `state.metrics`. When there are more than 12 metrics, use `[` and `]` to page through them.
 4. Pixel observations. Use `SHIFT+O` to overlay pixel observations if available. To use this feature, the observation must be a `dict` and the pixel keys must be prefixed with `pixels/`.
 
 ---
@@ -138,7 +138,7 @@ Some background on how rscope works: between policy updates, `rscope` unrolls mu
 
 - Typically, stochastic policies are used for evaluating training progress while deterministic ones are deployed. While you can use rscope on stochastic policies to get a feel for the agent's training exploration, we recommend [deterministic evals](https://github.com/google/brax/blob/main/brax/training/agents/ppo/train.py#L232).
 - Renders incorrectly for domain-randomized training because the loaded assets are from the nominal model definition.
-- Plots only a limited number of metric keys and does not automatically filter shaping rewards.
+- Plots metric keys 12 at a time and does not automatically filter shaping rewards.
 - Visualizes only a limited number of pixel observations.
 - Cannot capture curriculum progression during training, as curriculums depend on `state.info`, which is reset at the start of an evaluator run.
 - Currently supports only PPO-based training.
