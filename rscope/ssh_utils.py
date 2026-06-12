@@ -1,5 +1,6 @@
 import getpass
 import os
+from pathlib import Path
 from queue import Empty
 from queue import Queue
 import re
@@ -20,33 +21,104 @@ _PASSWORD_CACHE_LOCK = threading.Lock()
 
 def _parse_ssh_target():
   ssh_to = FLAGS.ssh_to
+  username = None
+  host_port = ssh_to
   if "@" in ssh_to:
     username, host_port = ssh_to.split("@", 1)
-  else:
-    username = getpass.getuser()
-    host_port = ssh_to
 
   if ":" in host_port:
     host, port_str = host_port.rsplit(":", 1)
     port = int(port_str)
   else:
     host = host_port
-    port = 22
+    port = None
 
   return username, host, port
 
 
-def _get_ssh_auth(username, host, port):
-  if FLAGS.ssh_key:
-    return {"key_filename": os.path.expanduser(FLAGS.ssh_key)}
+def _get_ssh_config_path() -> Path:
+  return Path.home() / ".ssh" / "config"
 
+
+def _load_ssh_config() -> paramiko.SSHConfig | None:
+  config_path = _get_ssh_config_path()
+  if not config_path.exists():
+    return None
+
+  try:
+    with config_path.open(encoding="utf-8") as f:
+      ssh_config = paramiko.SSHConfig()
+      ssh_config.parse(f)
+  except OSError as e:
+    logging.warning("Failed to read SSH config %s: %s", config_path, e)
+    return None
+
+  return ssh_config
+
+
+def _expand_identity_path(path: str) -> str:
+  expanded = os.path.expanduser(path)
+  expanded = os.path.expandvars(expanded)
+  return re.sub(
+      r"%([^%]+)%",
+      lambda match: os.environ.get(match.group(1), match.group(0)),
+      expanded,
+  )
+
+
+def _resolve_ssh_target():
+  cli_username, host_alias, cli_port = _parse_ssh_target()
+  ssh_config = _load_ssh_config()
+  host_config = ssh_config.lookup(host_alias) if ssh_config else {}
+
+  username = cli_username or host_config.get("user") or getpass.getuser()
+  hostname = host_config.get("hostname", host_alias)
+  port = cli_port if cli_port is not None else int(host_config.get("port", 22))
+
+  return username, hostname, port, host_config
+
+
+def _get_primary_ssh_auth(host_config):
+  if FLAGS.ssh_key:
+    return {"key_filename": _expand_identity_path(FLAGS.ssh_key)}
+
+  identity_files = host_config.get("identityfile") or []
+  if isinstance(identity_files, str):
+    identity_files = [identity_files]
+  if identity_files:
+    return {
+        "key_filename": [
+            _expand_identity_path(identity_file)
+            for identity_file in identity_files
+        ]
+    }
+
+  return {}
+
+
+def _get_cached_password(username, host, port):
   cache_key = (username, host, port)
   with _PASSWORD_CACHE_LOCK:
-    if cache_key not in _PASSWORD_CACHE:
-      _PASSWORD_CACHE[cache_key] = getpass.getpass(
-          prompt=f"SSH password for {username}@{host}: "
-      )
-    password = _PASSWORD_CACHE[cache_key]
+    return _PASSWORD_CACHE.get(cache_key)
+
+
+def _set_cached_password(username, host, port, password):
+  cache_key = (username, host, port)
+  with _PASSWORD_CACHE_LOCK:
+    _PASSWORD_CACHE[cache_key] = password
+
+
+def _clear_cached_password(username, host, port):
+  cache_key = (username, host, port)
+  with _PASSWORD_CACHE_LOCK:
+    _PASSWORD_CACHE.pop(cache_key, None)
+
+
+def _get_password_auth(username, host, port):
+  password = _get_cached_password(username, host, port)
+  if password is None:
+    password = getpass.getpass(prompt=f"SSH password for {username}@{host}: ")
+    _set_cached_password(username, host, port, password)
 
   return {
       "password": password,
@@ -56,27 +128,65 @@ def _get_ssh_auth(username, host, port):
 
 
 def prime_ssh_password_cache():
-  if FLAGS.ssh_key:
-    return
+  # Password prompting is handled lazily in ssh_connect after key/config auth.
+  return
 
-  username, host, port = _parse_ssh_target()
-  _get_ssh_auth(username, host, port)
+
+def _connect_with_auth(ssh, hostname, port, username, connect_kwargs):
+  ssh.connect(
+      hostname,
+      port=port,
+      username=username,
+      timeout=10,
+      **connect_kwargs,
+  )
 
 
 def ssh_connect(ssh):
   ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-  username, host, port = _parse_ssh_target()
-  connect_kwargs = _get_ssh_auth(username, host, port)
+  username, hostname, port, host_config = _resolve_ssh_target()
 
-  # Connect using parsed values with timeout
+  password_auth = _get_cached_password(username, hostname, port)
+  if password_auth is not None:
+    try:
+      _connect_with_auth(
+          ssh,
+          hostname,
+          port,
+          username,
+          {
+              "password": password_auth,
+              "look_for_keys": False,
+              "allow_agent": False,
+          },
+      )
+      return
+    except paramiko.AuthenticationException:
+      _clear_cached_password(username, hostname, port)
+    except paramiko.SSHException as e:
+      logging.error(f"SSH connection failed: {e}")
+      exit(1)
+    except Exception as e:
+      logging.error(f"Unexpected error during SSH connection: {e}")
+      exit(1)
+
+  primary_auth = _get_primary_ssh_auth(host_config)
+
   try:
-    ssh.connect(
-        host,
-        port=port,
-        username=username,
-        timeout=10,
-        **connect_kwargs,
-    )
+    _connect_with_auth(ssh, hostname, port, username, primary_auth)
+    return
+  except paramiko.AuthenticationException:
+    pass
+  except paramiko.SSHException as e:
+    logging.error(f"SSH connection failed: {e}")
+    exit(1)
+  except Exception as e:
+    logging.error(f"Unexpected error during SSH connection: {e}")
+    exit(1)
+
+  try:
+    password_kwargs = _get_password_auth(username, hostname, port)
+    _connect_with_auth(ssh, hostname, port, username, password_kwargs)
   except paramiko.AuthenticationException as e:
     logging.error(f"SSH authentication failed: {e}")
     exit(1)

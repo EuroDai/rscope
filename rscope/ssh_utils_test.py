@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import pickle
+import paramiko
 from queue import Queue
 import shutil
 import tempfile
@@ -67,6 +68,8 @@ class SSHUtilsTest(absltest.TestCase):
     # Create temporary directories for test
     self.local_temp_dir = tempfile.mkdtemp()
     self.remote_temp_dir = tempfile.mkdtemp()
+    self.ssh_config_dir = tempfile.mkdtemp()
+    self.ssh_config_path = Path(self.ssh_config_dir) / "config"
     ssh_utils._PASSWORD_CACHE.clear()
     if not flags.FLAGS.is_parsed():
       flags.FLAGS(["ssh_utils_test"])
@@ -84,6 +87,11 @@ class SSHUtilsTest(absltest.TestCase):
     config.META_PATH = config.BASE_PATH / "rscope_meta.pkl"
     config.set_remote_base_path("/remote/rollouts")
 
+    self.ssh_config_path_patcher = mock.patch(
+        "rscope.ssh_utils._get_ssh_config_path", return_value=self.ssh_config_path
+    )
+    self.ssh_config_path_patcher.start()
+
     # Set up the SSH client mock
     self.mock_ssh_instance = MockSSHClient(self.remote_temp_dir)
     self.ssh_client_patcher = mock.patch(
@@ -94,6 +102,7 @@ class SSHUtilsTest(absltest.TestCase):
   def tearDown(self):
     # Stop the patchers
     self.ssh_client_patcher.stop()
+    self.ssh_config_path_patcher.stop()
 
     # Restore original config values
     config.BASE_PATH = self.orig_base_path
@@ -105,38 +114,112 @@ class SSHUtilsTest(absltest.TestCase):
     # Clean up temp directories
     shutil.rmtree(self.local_temp_dir, ignore_errors=True)
     shutil.rmtree(self.remote_temp_dir, ignore_errors=True)
+    shutil.rmtree(self.ssh_config_dir, ignore_errors=True)
 
-  @flagsaver.flagsaver(ssh_to="alice@example.com:2222", ssh_key="~/.ssh/test_key")
-  def test_ssh_connect_uses_key_when_provided(self):
+  def _write_ssh_config(self, text: str):
+    self.ssh_config_path.write_text(text, encoding="utf-8")
+
+  @flagsaver.flagsaver(ssh_to="alice@myalias:2222", ssh_key="~/.ssh/test_key")
+  def test_ssh_connect_uses_explicit_key_when_provided(self):
+    self._write_ssh_config("Host myalias\n  Hostname real.example.com\n")
     ssh = mock.Mock()
 
     ssh_utils.ssh_connect(ssh)
 
     ssh.set_missing_host_key_policy.assert_called_once()
     ssh.connect.assert_called_once_with(
-        "example.com",
+        "real.example.com",
         port=2222,
         username="alice",
         timeout=10,
         key_filename=os.path.expanduser("~/.ssh/test_key"),
     )
 
-  @flagsaver.flagsaver(ssh_to="127.0.0.1:8080", ssh_key=None)
-  @mock.patch("rscope.ssh_utils.getpass.getpass", return_value="secret")
-  @mock.patch("rscope.ssh_utils.getpass.getuser", return_value="localuser")
-  def test_ssh_connect_prompts_once_for_password(self, mock_getuser, mock_getpass):
+  @flagsaver.flagsaver(ssh_to="myalias", ssh_key=None)
+  def test_ssh_connect_uses_ssh_config_identity_when_available(self):
+    with mock.patch.dict(os.environ, {"USERPROFILE": "/tmp/windows-home"}, clear=False):
+      self._write_ssh_config(
+          "\n".join([
+              "Host myalias",
+              "  Hostname real.example.com",
+              "  User configuser",
+              "  Port 2200",
+              "  IdentityFile ~/.ssh/id_config",
+              "  IdentityFile %USERPROFILE%/.ssh/id_windows",
+              "",
+          ])
+      )
+      ssh = mock.Mock()
+
+      ssh_utils.ssh_connect(ssh)
+
+    ssh.connect.assert_called_once_with(
+        "real.example.com",
+        port=2200,
+        username="configuser",
+        timeout=10,
+        key_filename=[
+            os.path.expanduser("~/.ssh/id_config"),
+            "/tmp/windows-home/.ssh/id_windows",
+        ],
+    )
+
+  @flagsaver.flagsaver(ssh_to="alice@myalias:2022", ssh_key=None)
+  def test_cli_username_and_port_override_ssh_config(self):
+    self._write_ssh_config(
+        "\n".join([
+            "Host myalias",
+            "  Hostname real.example.com",
+            "  User configuser",
+            "  Port 2200",
+            "  IdentityFile ~/.ssh/id_config",
+            "",
+        ])
+    )
     ssh = mock.Mock()
 
     ssh_utils.ssh_connect(ssh)
 
     ssh.connect.assert_called_once_with(
-        "127.0.0.1",
-        port=8080,
-        username="localuser",
+        "real.example.com",
+        port=2022,
+        username="alice",
         timeout=10,
-        password="secret",
-        look_for_keys=False,
-        allow_agent=False,
+        key_filename=[os.path.expanduser("~/.ssh/id_config")],
+    )
+
+  @flagsaver.flagsaver(ssh_to="127.0.0.1:8080", ssh_key=None)
+  @mock.patch("rscope.ssh_utils.getpass.getpass", return_value="secret")
+  @mock.patch("rscope.ssh_utils.getpass.getuser", return_value="localuser")
+  def test_ssh_connect_falls_back_to_password_and_caches_it(
+      self, mock_getuser, mock_getpass
+  ):
+    ssh = mock.Mock()
+    ssh.connect.side_effect = [paramiko.AuthenticationException("bad key"), None]
+
+    ssh_utils.ssh_connect(ssh)
+
+    self.assertEqual(ssh.connect.call_count, 2)
+    self.assertEqual(
+        ssh.connect.call_args_list[0],
+        mock.call(
+            "127.0.0.1",
+            port=8080,
+            username="localuser",
+            timeout=10,
+        ),
+    )
+    self.assertEqual(
+        ssh.connect.call_args_list[1],
+        mock.call(
+            "127.0.0.1",
+            port=8080,
+            username="localuser",
+            timeout=10,
+            password="secret",
+            look_for_keys=False,
+            allow_agent=False,
+        ),
     )
     mock_getuser.assert_called_once()
     mock_getpass.assert_called_once_with(
@@ -145,23 +228,7 @@ class SSHUtilsTest(absltest.TestCase):
 
     second_ssh = mock.Mock()
     ssh_utils.ssh_connect(second_ssh)
-    self.assertEqual(mock_getpass.call_count, 1)
-
-  @flagsaver.flagsaver(ssh_to="127.0.0.1:8080", ssh_key=None)
-  @mock.patch("rscope.ssh_utils.getpass.getpass", return_value="secret")
-  @mock.patch("rscope.ssh_utils.getpass.getuser", return_value="localuser")
-  def test_prime_ssh_password_cache_prompts_before_connections(
-      self, mock_getuser, mock_getpass
-  ):
-    ssh_utils.prime_ssh_password_cache()
-
-    ssh = mock.Mock()
-    ssh_utils.ssh_connect(ssh)
-
-    mock_getpass.assert_called_once_with(
-        prompt="SSH password for localuser@127.0.0.1: "
-    )
-    ssh.connect.assert_called_once_with(
+    second_ssh.connect.assert_called_once_with(
         "127.0.0.1",
         port=8080,
         username="localuser",
@@ -170,7 +237,18 @@ class SSHUtilsTest(absltest.TestCase):
         look_for_keys=False,
         allow_agent=False,
     )
-    self.assertGreaterEqual(mock_getuser.call_count, 1)
+    self.assertEqual(mock_getpass.call_count, 1)
+
+  @flagsaver.flagsaver(ssh_to="127.0.0.1:8080", ssh_key=None)
+  @mock.patch("rscope.ssh_utils.getpass.getpass")
+  @mock.patch("rscope.ssh_utils.getpass.getuser")
+  def test_prime_ssh_password_cache_no_longer_prompts(
+      self, mock_getuser, mock_getpass
+  ):
+    ssh_utils.prime_ssh_password_cache()
+
+    mock_getuser.assert_not_called()
+    mock_getpass.assert_not_called()
 
   @mock.patch("rscope.ssh_utils.ssh_connect")
   def test_remote_base_path_is_used_for_ssh_file_operations(self, _):

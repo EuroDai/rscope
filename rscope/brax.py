@@ -38,6 +38,7 @@ class BraxRolloutSaver:
     self.determistic = determistic
     self.make_policy = None
     self.key = key
+    self._jit_rollout = jax.jit(self._rollout)
     rscope_utils.rscope_init(
         self.trace_env.xml_path, self.trace_env.model_assets
     )
@@ -77,7 +78,9 @@ class BraxRolloutSaver:
     return trace, obs, rew, done
 
   def dump_rollout(self, params):
-    trace, obs, rew, done = jax.jit(self._rollout)(params)
+    if self.make_policy is None:
+      raise ValueError("set_make_policy must be called before dump_rollout")
+    trace, obs, rew, done = self._jit_rollout(params)
     if self.callback_fn:
       self.callback_fn(trace, obs, rew, done)
     rscope_utils.dump_eval(trace, obs, rew)

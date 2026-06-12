@@ -14,7 +14,9 @@ flags.DEFINE_string(
     'ssh_to', None, 'SSH connection string in the format [username@]host[:port]'
 )
 flags.DEFINE_string(
-    'ssh_key', None, 'Path to SSH private key file; prompts for password if omitted'
+    'ssh_key',
+    None,
+    'Optional SSH private key override; otherwise use ~/.ssh/config or default SSH keys and prompt for a password if needed',
 )
 flags.DEFINE_integer(
     'polling_interval', 10, 'Interval in seconds for SSH file polling'
