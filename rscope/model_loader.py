@@ -11,6 +11,25 @@ import rscope.config as config
 from rscope.ssh_utils import ssh_connect
 
 
+def _load_mj_model_from_meta(meta):
+  xml_asset_name = pathlib.Path(meta["xml_path"]).name
+  stub_file = "<mujoco><include file='{}'/></mujoco>".format(xml_asset_name)
+  assets = meta["model_assets"]
+  try:
+    return mujoco.MjModel.from_xml_string(stub_file, assets=assets)
+  except ValueError as exc:
+    if "Repeated file name in assets dict" not in str(exc):
+      raise
+    if xml_asset_name not in assets:
+      raise
+    # Older rscope dumps may include large asset dictionaries with repeated
+    # basenames. Self-contained generated XMLs do not need those extra assets.
+    return mujoco.MjModel.from_xml_string(
+        stub_file,
+        assets={xml_asset_name: assets[xml_asset_name]},
+    )
+
+
 def load_model_and_data(ssh_enabled=False):
   """Load meta information and create the Mujoco model and data."""
   # Create the active run directory if it doesn't exist
@@ -42,11 +61,6 @@ def load_model_and_data(ssh_enabled=False):
   # Load meta file and create model
   with open(config.META_PATH, "rb") as f:
     meta = pickle.load(f)
-  stub_file = "<mujoco><include file='{}'/></mujoco>".format(
-      pathlib.Path(meta["xml_path"]).name
-  )
-  mj_model = mujoco.MjModel.from_xml_string(
-      stub_file, assets=meta["model_assets"]
-  )
+  mj_model = _load_mj_model_from_meta(meta)
   mj_data = mujoco.MjData(mj_model)
   return mj_model, mj_data, meta

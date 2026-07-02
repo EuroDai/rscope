@@ -6,6 +6,7 @@ import pathlib
 from pathlib import PosixPath
 import pickle
 import shutil
+import xml.etree.ElementTree as ET
 from typing import Any, Dict, Optional, Union
 
 import jax
@@ -24,6 +25,14 @@ def clear_dir(path: pathlib.Path):
       child.unlink()
 
 
+def _xml_has_external_file_refs(xml_bytes: bytes) -> bool:
+  try:
+    root = ET.fromstring(xml_bytes)
+  except ET.ParseError:
+    return True
+  return any("file" in elem.attrib for elem in root.iter())
+
+
 def rscope_init(
     xml_path: Union[PosixPath, str],
     model_assets: Optional[Dict[str, Any]] = None,
@@ -34,12 +43,17 @@ def rscope_init(
   else:
     os.makedirs(config.BASE_PATH)
 
-  # save the xml into the assets for remote rscope usage.
-  if model_assets is None:
+  # Save the xml into assets for remote rscope usage. Some generated MJCFs are
+  # already self-contained; keeping every environment asset can introduce many
+  # duplicate basenames such as YCB texture_map.png files, which MuJoCo rejects
+  # when loading from an in-memory assets dict.
+  xml_bytes = pathlib.Path(xml_path).read_bytes()
+  xml_asset_name = pathlib.Path(xml_path).name
+  if model_assets is None or not _xml_has_external_file_refs(xml_bytes):
     model_assets = {}
-  model_assets[pathlib.Path(xml_path).name] = pathlib.Path(
-      xml_path
-  ).read_bytes()
+  else:
+    model_assets = dict(model_assets)
+  model_assets[xml_asset_name] = xml_bytes
 
   if not isinstance(xml_path, str):
     xml_path = xml_path.as_posix()
