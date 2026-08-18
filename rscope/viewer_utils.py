@@ -23,8 +23,9 @@ def get_menu_text():
       'SHIFT + M\nSHIFT + O\nSPACE\nRIGHT/LEFT\nUP/DOWN\nQ/E\nSHIFT + H\nTAB\n-/+'
   )
   text_2 = (
-      'Toggle metrics\nToggle pixel obs\nPause/play\nNext/prev env\nNext/prev'
-      ' eval\nPrev/next metric page\nToggle help\nToggle left UI\nSpeed down/up'
+      'Toggle metrics\nToggle observations\nPause/play\nNext/prev policy\n'
+      'Next/prev replay\nPrev/next metric page\nToggle help\nToggle left UI\n'
+      'Speed down/up'
   )
   return text_1, text_2
 

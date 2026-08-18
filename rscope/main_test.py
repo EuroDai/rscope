@@ -10,6 +10,48 @@ from absl.testing import absltest
 
 class MainConfigTest(absltest.TestCase):
 
+  def test_viewer_internal_locking_calls_are_outside_viewer_lock(self):
+    main_module_path = pathlib.Path(__file__).parent / 'main.py'
+    tree = ast.parse(main_module_path.read_text(encoding='utf-8'))
+    internally_locked = {
+        'clear_figures',
+        'clear_images',
+        'set_figures',
+        'set_images',
+        'set_texts',
+        'sync',
+    }
+
+    nested_calls = []
+    for node in ast.walk(tree):
+      if not isinstance(node, ast.With):
+        continue
+      locks_viewer = any(
+          isinstance(item.context_expr, ast.Call)
+          and isinstance(item.context_expr.func, ast.Attribute)
+          and item.context_expr.func.attr == 'lock'
+          and isinstance(item.context_expr.func.value, ast.Name)
+          and item.context_expr.func.value.id == 'viewer'
+          for item in node.items
+      )
+      if not locks_viewer:
+        continue
+      nested_calls.extend(
+          call.func.attr
+          for call in ast.walk(node)
+          if isinstance(call, ast.Call)
+          and isinstance(call.func, ast.Attribute)
+          and isinstance(call.func.value, ast.Name)
+          and call.func.value.id == 'viewer'
+          and call.func.attr in internally_locked
+      )
+
+    self.assertEmpty(
+        nested_calls,
+        'MuJoCo viewer APIs that lock internally must not run under '
+        f'viewer.lock(): {nested_calls}',
+    )
+
   def test_logging_verbosity_is_warning(self):
     """Test that logging verbosity in __main__.py is set to WARNING, not INFO.
 

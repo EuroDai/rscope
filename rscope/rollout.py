@@ -6,6 +6,7 @@ import pickle
 from typing import Dict, List, NamedTuple, Union
 
 from absl import logging
+import numpy as np
 from numpy.typing import NDArray
 
 MAX_VIEWPORTS = 12
@@ -25,6 +26,12 @@ class Rollout(NamedTuple):
 # Global rollout state.
 rollouts: List[Rollout] = []
 rollout_names: List[str] = []
+rollout_lengths: List[NDArray] = []
+rollout_env_labels: List[tuple[str, ...]] = []
+rollout_model_fields: List[Dict] = []
+rollout_metadata: List[Dict] = []
+bundle_model_path: Path | None = None
+bundle_manifest: Dict | None = None
 num_evals = 0
 num_envs = 0
 env_ctrl_dt = 0.0
@@ -64,18 +71,76 @@ def append_unroll(fpath: Union[str, Path]):
   insert_idx = bisect_right(rollout_names, fname)
   rollout_names.insert(insert_idx, fname)
   rollouts.insert(insert_idx, rollout)
+  rollout_lengths.insert(
+      insert_idx,
+      np.full(rollout.qpos.shape[1], rollout.qpos.shape[0], dtype=int),
+  )
+  rollout_env_labels.insert(
+      insert_idx,
+      tuple(f'Env {index + 1}' for index in range(rollout.qpos.shape[1])),
+  )
+  rollout_model_fields.insert(insert_idx, {})
+  rollout_metadata.insert(insert_idx, {})
   _update_metadata(rollout)
 
 
 def load_all_local_unrolls(base_path: Union[str, Path]) -> List[str]:
   """Load all existing unroll files from base_path into rollouts."""
+  global bundle_model_path, bundle_manifest
   base = Path(base_path)
+  manifest_path = base / 'manifest.json'
+  if manifest_path.is_file():
+    from rscope.replay_bundle import load_bundle
+
+    bundle = load_bundle(base)
+    bundle_model_path = bundle['model_path']
+    bundle_manifest = bundle['manifest']
+    for item in bundle['rollouts']:
+      value = Rollout(
+          qpos=item['qpos'],
+          qvel=item['qvel'],
+          mocap_pos=item['mocap_pos'],
+          mocap_quat=item['mocap_quat'],
+          obs=item['obs'],
+          reward=item['reward'],
+          time=item['time'],
+          metrics=item['metrics'],
+      )
+      rollouts.append(value)
+      rollout_names.append(item['name'])
+      rollout_lengths.append(item['lengths'])
+      rollout_env_labels.append(item['env_labels'])
+      rollout_model_fields.append(item['model_fields'])
+      rollout_metadata.append(item['metadata'])
+      _update_metadata(value)
+    return rollout_names.copy()
   unroll_files = sorted(
       f.name for f in base.iterdir() if f.name.endswith('.mj_unroll')
   )
   for fname in unroll_files:
     append_unroll(base / fname)
   return unroll_files
+
+
+def get_replay_length(eval_index: int, env_index: int) -> int:
+  """Return the unpadded frame count for one rollout environment."""
+  return int(rollout_lengths[eval_index][env_index])
+
+
+def get_env_label(eval_index: int, env_index: int) -> str:
+  return rollout_env_labels[eval_index][env_index]
+
+
+def get_rollout_metadata(eval_index: int) -> Dict:
+  return rollout_metadata[eval_index]
+
+
+def apply_current_model_fields(model, eval_index: int) -> None:
+  fields = rollout_model_fields[eval_index]
+  if fields:
+    from rscope.replay_bundle import apply_model_fields
+
+    apply_model_fields(model, fields)
 
 
 def dict_obs_pixels_env_select(obs: Dict, i_env: int) -> Dict:
@@ -92,6 +157,11 @@ def dict_obs_pixels_env_select(obs: Dict, i_env: int) -> Dict:
       obs_pixels[key] = obs[key][:, i_env]
       num_shown += 1
   return obs_pixels
+
+
+def dict_obs_env_select(obs: Dict, i_env: int) -> Dict:
+  """Select one environment while retaining all observation modalities."""
+  return {key: value[:, i_env] for key, value in obs.items()}
 
 
 def dict_obs_t_select(obs: Dict, t: int) -> Dict:

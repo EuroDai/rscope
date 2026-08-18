@@ -24,7 +24,7 @@ license = "MIT"
 license-files = ["LICEN[CS]E*"]
 
 dependencies = [
-    "jax",
+    "absl-py",
     "numpy",
     "paramiko",
     "mujoco",
@@ -34,9 +34,15 @@ dependencies = [
 keywords = ["mujoco", "reinforcement learning", "brax", "visualization"]
 
 [project.optional-dependencies]
+brax = [
+  "jax",
+  "ml-collections",
+]
 test = [
-    "absl-py",
-    "pytest",
+  "absl-py",
+  "jax",
+  "ml-collections",
+  "pytest",
     "pytest-xdist",
 ]
 dev = [

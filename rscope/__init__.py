@@ -8,7 +8,11 @@ from .image_processing import *
 from .main import *
 from .model_loader import *
 from .rollout import *
-from .rscope_utils import *
+try:
+  from .rscope_utils import *
+except ModuleNotFoundError as exc:
+  if exc.name != 'jax':
+    raise
 from .state import *
 from .viewer_utils import *
 

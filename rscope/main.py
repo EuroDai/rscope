@@ -1,10 +1,11 @@
 """Rscope main script."""
 
+from collections.abc import Mapping
+from pathlib import Path
 from queue import Queue
 import shutil
 import threading
 import time
-from pathlib import Path
 
 from absl import app
 from absl import flags
@@ -17,10 +18,11 @@ import rscope.config as config
 import rscope.event_handler as event_handler
 import rscope.image_processing as image_processing
 import rscope.model_loader as model_loader
+import rscope.point_cloud as point_cloud
 import rscope.rollout as rollout
+from rscope.ssh_utils import prime_ssh_password_cache
 from rscope.ssh_utils import SSHFileTransfer
 from rscope.ssh_utils import SSHFileWatcher
-from rscope.ssh_utils import prime_ssh_password_cache
 from rscope.state import ViewerState
 import rscope.viewer_utils as vu
 
@@ -37,7 +39,8 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
   # if BASE_PATH does not exist, make it
   if not config.BASE_PATH.exists():
     config.BASE_PATH.mkdir(parents=True, exist_ok=True)
-  if not config.TEMP_PATH.exists():
+  bundle_mode = (config.BASE_PATH / "manifest.json").is_file()
+  if not bundle_mode and not config.TEMP_PATH.exists():
     config.TEMP_PATH.mkdir(parents=True, exist_ok=True)
 
   # Create an instance of ViewerState to encapsulate state.
@@ -71,15 +74,17 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
     transfer_thread = SSHFileTransfer(file_queue, stop_event, viewer_state)
 
   # Setup file system observer.
-  event_handler_instance = event_handler.MjUnrollHandler()
-  observer = Observer()
-  observer.schedule(
-      event_handler_instance, str(config.BASE_PATH), recursive=False
-  )
-  try:
-    observer.start()
-  except Exception as e:
-    logging.error(f"Error starting observer: {e}")
+  observer = None
+  if not bundle_mode:
+    event_handler_instance = event_handler.MjUnrollHandler()
+    observer = Observer()
+    observer.schedule(
+        event_handler_instance, str(config.BASE_PATH), recursive=False
+    )
+    try:
+      observer.start()
+    except Exception as e:
+      logging.error(f"Error starting observer: {e}")
 
   if ssh_enabled:
     watcher_thread.start()
@@ -103,7 +108,7 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
   vu.reset_figures(metrics_keys)
 
   # Determine the initial replay length.
-  replay_len = rollout.rollouts[0].qpos.shape[0]
+  replay_len = rollout.get_replay_length(0, 0)
 
   # Load the Mujoco model and data.
   mj_model, mj_data, meta = model_loader.load_model_and_data(ssh_enabled)
@@ -130,7 +135,7 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
         )
         vu.reset_figures(metrics_keys)
         if isinstance(full_rollout.obs, dict):
-          obs = rollout.dict_obs_pixels_env_select(
+          obs = rollout.dict_obs_env_select(
               full_rollout.obs, viewer_state.cur_env
           )
         else:
@@ -148,119 +153,146 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
             ),
         )
         replay_index = 0
-        replay_len = cur_rollout.qpos.shape[0]
-
-      with viewer.lock():
-        # Check if the transfer status message has expired
-        if (
-            ssh_enabled
-            and viewer_state.transfer_status
-            and viewer_state.transfer_until
-        ):
-          current_time = time.time()
-          if current_time > viewer_state.transfer_until:
-            # Clear the message if it's time
-            viewer_state.transfer_status = None
-            viewer_state.transfer_until = None
-
-        metrics_keys = vu.get_ordered_metric_keys(list(cur_rollout.metrics.keys()))
-        ordered_metrics = {
-            key: cur_rollout.metrics[key] for key in metrics_keys
-        }
-        num_metric_pages = rollout.get_num_metric_pages(
-            ordered_metrics, vu.MAX_VIEWPORTS
+        replay_len = rollout.get_replay_length(
+            viewer_state.cur_eval, viewer_state.cur_env
         )
-        if num_metric_pages:
-          viewer_state.cur_metric_page %= num_metric_pages
-          metric_status = (
-              f"{viewer_state.cur_metric_page + 1}/{num_metric_pages}"
-              if viewer_state.show_metrics
-              else "off"
-          )
-        else:
-          viewer_state.cur_metric_page = 0
-          metric_status = "0/0" if viewer_state.show_metrics else "off"
-
-        # Overlay text.
-        text_1 = "Eval\nEnv\nStep\nMetrics\nStatus\nSpeed"
-        text_2 = (
-            f"{viewer_state.cur_eval+1}/{len(rollout.rollouts)}\n"
-            f"{viewer_state.cur_env+1}/{rollout.num_envs}\n"
-            f"{replay_index}\n"
-            f"{metric_status}\n"
-        )
-        text_2 += "Pause" if viewer_state.pause else "Play"
-        text_2 += f"\n{viewer_state.playback_speed * 100:.1f}%"
-        overlays = [(
-            mujoco.mjtFontScale.mjFONTSCALE_150,
-            mujoco.mjtGridPos.mjGRID_TOPLEFT,
-            text_1,
-            text_2,
-        )]
-
-        if viewer_state.show_help:
-          menu_text_1, menu_text_2 = vu.get_menu_text()
-          overlays.append((
-              mujoco.mjtFontScale.mjFONTSCALE_150,
-              mujoco.mjtGridPos.mjGRID_BOTTOMLEFT,
-              menu_text_1,
-              menu_text_2,
-          ))
-
-        # Add transfer status if available
-        if ssh_enabled and viewer_state.transfer_status:
-          overlays.append((
-              mujoco.mjtFontScale.mjFONTSCALE_250,
-              mujoco.mjtGridPos.mjGRID_BOTTOM,
-              viewer_state.transfer_status,
-              "",
-          ))
-
-        loop_cnt += 1
-        if loop_cnt % 2 == 0:
-          viewer.set_texts(overlays)
-
-          # Render figures (metrics).
-          if viewer_state.show_metrics:
-            if not viewer_state.pause:
-              for key, metrics in ordered_metrics.items():
-                vu.add_data_to_fig(key, metrics[replay_index])
-            cur_metrics = rollout.metrics_page_select(
-                ordered_metrics,
-                viewer_state.cur_metric_page,
-                vu.MAX_VIEWPORTS,
-            )
-            viewports = vu.get_viewports(len(cur_metrics), viewer.viewport)
-            viewport_figures = [
-                (viewport, vu.figures[key])
-                for key, viewport in zip(cur_metrics.keys(), viewports)
+        with viewer.lock():
+          rollout.apply_current_model_fields(mj_model, viewer_state.cur_eval)
+          if (
+              isinstance(cur_rollout.obs, Mapping)
+              and "replay_focus_position_w_m" in cur_rollout.obs
+          ):
+            viewer.cam.lookat[:] = cur_rollout.obs["replay_focus_position_w_m"][
+                0
             ]
-            if viewport_figures:
-              viewer.set_figures(viewport_figures)
-            else:
-              viewer.clear_figures()
+            viewer.cam.distance = 0.8
+            viewer.cam.azimuth = 135.0
+            viewer.cam.elevation = -20.0
+
+      # Check if the transfer status message has expired.
+      if (
+          ssh_enabled
+          and viewer_state.transfer_status
+          and viewer_state.transfer_until
+      ):
+        current_time = time.time()
+        if current_time > viewer_state.transfer_until:
+          viewer_state.transfer_status = None
+          viewer_state.transfer_until = None
+
+      metrics_keys = vu.get_ordered_metric_keys(
+          list(cur_rollout.metrics.keys())
+      )
+      ordered_metrics = {key: cur_rollout.metrics[key] for key in metrics_keys}
+      num_metric_pages = rollout.get_num_metric_pages(
+          ordered_metrics, vu.MAX_VIEWPORTS
+      )
+      if num_metric_pages:
+        viewer_state.cur_metric_page %= num_metric_pages
+        metric_status = (
+            f"{viewer_state.cur_metric_page + 1}/{num_metric_pages}"
+            if viewer_state.show_metrics
+            else "off"
+        )
+      else:
+        viewer_state.cur_metric_page = 0
+        metric_status = "0/0" if viewer_state.show_metrics else "off"
+
+      # Overlay text.
+      text_1 = "Replay\nPolicy\nStep\nMetrics\nStatus\nSpeed"
+      text_2 = (
+          f"{rollout.rollout_names[viewer_state.cur_eval]} "
+          f"({viewer_state.cur_eval+1}/{len(rollout.rollouts)})\n"
+          f"{rollout.get_env_label(viewer_state.cur_eval, viewer_state.cur_env)}"
+          "\n"
+          f"{replay_index}\n"
+          f"{metric_status}\n"
+      )
+      text_2 += "Pause" if viewer_state.pause else "Play"
+      text_2 += f"\n{viewer_state.playback_speed * 100:.1f}%"
+      overlays = [(
+          mujoco.mjtFontScale.mjFONTSCALE_150,
+          mujoco.mjtGridPos.mjGRID_TOPLEFT,
+          text_1,
+          text_2,
+      )]
+      replay_metadata = rollout.get_rollout_metadata(viewer_state.cur_eval)
+      if replay_metadata:
+        selection = replay_metadata.get("selection", {})
+        info_1 = "Category\nObject\nSeed / Env"
+        info_2 = (
+            f"{selection.get('category', 'unknown')}\n"
+            f"{replay_metadata.get('object_variant_name', 'unknown')}\n"
+            f"{replay_metadata.get('batch_seed', '?')} / "
+            f"{replay_metadata.get('env_index', '?')}"
+        )
+        overlays.append((
+            mujoco.mjtFontScale.mjFONTSCALE_150,
+            mujoco.mjtGridPos.mjGRID_TOPRIGHT,
+            info_1,
+            info_2,
+        ))
+
+      if viewer_state.show_help:
+        menu_text_1, menu_text_2 = vu.get_menu_text()
+        overlays.append((
+            mujoco.mjtFontScale.mjFONTSCALE_150,
+            mujoco.mjtGridPos.mjGRID_BOTTOMLEFT,
+            menu_text_1,
+            menu_text_2,
+        ))
+
+      if ssh_enabled and viewer_state.transfer_status:
+        overlays.append((
+            mujoco.mjtFontScale.mjFONTSCALE_250,
+            mujoco.mjtGridPos.mjGRID_BOTTOM,
+            viewer_state.transfer_status,
+            "",
+        ))
+
+      loop_cnt += 1
+      if loop_cnt % 2 == 0:
+        # These viewer APIs lock internally in MuJoCo 3.11.
+        viewer.set_texts(overlays)
+
+        if viewer_state.show_metrics:
+          if not viewer_state.pause:
+            for key, metrics in ordered_metrics.items():
+              vu.add_data_to_fig(key, metrics[replay_index])
+          cur_metrics = rollout.metrics_page_select(
+              ordered_metrics,
+              viewer_state.cur_metric_page,
+              vu.MAX_VIEWPORTS,
+          )
+          viewports = vu.get_viewports(len(cur_metrics), viewer.viewport)
+          viewport_figures = [
+              (viewport, vu.figures[key])
+              for key, viewport in zip(cur_metrics.keys(), viewports)
+          ]
+          if viewport_figures:
+            viewer.set_figures(viewport_figures)
           else:
             viewer.clear_figures()
+        else:
+          viewer.clear_figures()
 
-        # Render pixel observations if available.
-        from collections.abc import Mapping
-
-        if isinstance(cur_rollout.obs, Mapping):
-          if any(key.startswith("pixels/") for key in cur_rollout.obs.keys()):
-            if viewer_state.show_pixel_obs:
-              cur_obs = rollout.dict_obs_t_select(cur_rollout.obs, replay_index)
-              viewports = vu.get_viewports(len(cur_obs), viewer.viewport)
-              processed_obs = {
-                  key: image_processing.process_img(
-                      cur_obs[key], viewport.height, viewport.width
-                  )
-                  for key, viewport in zip(cur_obs.keys(), viewports)
-              }
-              viewer.set_images(
-                  list(zip(viewports, list(processed_obs.values())))
-              )
-            else:
-              viewer.clear_images()
+      # Render pixel observations if available.
+      if isinstance(cur_rollout.obs, Mapping):
+        if any(key.startswith("pixels/") for key in cur_rollout.obs.keys()):
+          if viewer_state.show_pixel_obs:
+            cur_obs = rollout.dict_obs_t_select(cur_rollout.obs, replay_index)
+            viewports = vu.get_viewports(len(cur_obs), viewer.viewport)
+            processed_obs = {
+                key: image_processing.process_img(
+                    cur_obs[key], viewport.height, viewport.width
+                )
+                for key, viewport in zip(cur_obs.keys(), viewports)
+            }
+            viewer.set_images(
+                list(zip(viewports, list(processed_obs.values())))
+            )
+          else:
+            viewer.clear_images()
 
       # Advance simulation: update the state.
       def advance_rollout(mj_model, mj_data, idx):
@@ -276,10 +308,18 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
         mj_data.time = cur_rollout.time[idx]
         mujoco.mj_forward(mj_model, mj_data)
 
-      advance_rollout(mj_model, mj_data, replay_index)
+      with viewer.lock():
+        advance_rollout(mj_model, mj_data, replay_index)
+        if isinstance(cur_rollout.obs, Mapping):
+          point_cloud.update(
+              viewer.user_scn,
+              cur_rollout.obs,
+              replay_index,
+              visible=viewer_state.show_pixel_obs,
+          )
       if not viewer_state.pause:
         replay_index = (replay_index + 1) % replay_len
-        viewer.sync()
+      viewer.sync()
 
       time_until_next_step = float(
           rollout.env_ctrl_dt
@@ -293,5 +333,6 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
     watcher_thread.join()
     transfer_thread.join()
 
-  observer.stop()
-  observer.join()
+  if observer is not None:
+    observer.stop()
+    observer.join()

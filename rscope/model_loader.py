@@ -8,6 +8,7 @@ import mujoco
 import paramiko
 
 import rscope.config as config
+import rscope.rollout as rollout
 from rscope.ssh_utils import ssh_connect
 
 
@@ -58,7 +59,12 @@ def load_model_and_data(ssh_enabled=False):
         print(f"SSH error: {e}, retrying...")
         time.sleep(4)
 
-  # Load meta file and create model
+  if rollout.bundle_model_path is not None:
+    mj_model = mujoco.MjModel.from_binary_path(str(rollout.bundle_model_path))
+    mj_data = mujoco.MjData(mj_model)
+    return mj_model, mj_data, rollout.bundle_manifest
+
+  # Load legacy pickle metadata and create model.
   with open(config.META_PATH, "rb") as f:
     meta = pickle.load(f)
   mj_model = _load_mj_model_from_meta(meta)
