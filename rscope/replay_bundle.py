@@ -169,8 +169,20 @@ def load_bundle(base_path: str | Path) -> dict[str, Any]:
     model_fields = _load_npz(
         _verified_path(example_root, example['model_fields'])
     )
+    policy_names = tuple(
+        name for name in ('student', 'teacher') if name in example['policies']
+    )
+    unknown_policies = set(example['policies']) - {'student', 'teacher'}
+    if unknown_policies:
+      raise ValueError(
+          f'Unsupported replay policies: {sorted(unknown_policies)}.'
+      )
+    if not policy_names:
+      raise ValueError(
+          f'Replay example contains no policies: {example_manifest_path}'
+      )
     policies = []
-    for policy_name in ('student', 'teacher'):
+    for policy_name in policy_names:
       policy_record = example['policies'][policy_name]
       policy_root = example_root / policy_name
       states = _load_npz(_verified_path(policy_root, policy_record['state']))
@@ -220,11 +232,13 @@ def load_bundle(base_path: str | Path) -> dict[str, Any]:
             'mocap_pos': mocap_pos,
             'mocap_quat': mocap_quat,
             'obs': observations,
-            'reward': np.zeros((max_length, 2), dtype=np.float32),
+            'reward': np.zeros(
+                (max_length, len(policy_names)), dtype=np.float32
+            ),
             'time': time,
             'metrics': _combine_metrics(metric_values, metadata, max_length),
             'lengths': lengths,
-            'env_labels': ('Student', 'Teacher'),
+            'env_labels': tuple(name.title() for name in policy_names),
             'model_fields': model_fields,
             'metadata': {
                 **metadata,

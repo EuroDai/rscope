@@ -65,13 +65,16 @@ non-pickle NumPy trajectories:
 python -m rscope --path /path/to/replay-bundle
 ```
 
-For paired policy exports, use left/right to switch policies and up/down to
-switch replay examples. `SHIFT+M` displays scalar trajectory metrics and
-`SHIFT+O` overlays saved point-cloud observations in the MuJoCo scene.
+Bundles may contain Student, Teacher, or paired policies. For paired exports,
+use left/right to switch policies; use up/down to switch replay examples.
+`SHIFT+M` displays scalar trajectory metrics and `SHIFT+O` overlays saved
+point-cloud observations in the MuJoCo scene.
 
 Replay bundles are state playback artifacts. Rscope does not load checkpoints,
 run policies, recompute task success, or integrate the recorded physics again.
 The bundle producer remains responsible for those semantics.
+The viewer and bundle must use the same MuJoCo major/minor version; this replay
+branch pins MuJoCo 3.11.x to match ParaHand-Sim2Real bundles.
 
 #### Remote training runs
 Below, **update `user@remote_host`**, for example `alice@168.42.4.8`.

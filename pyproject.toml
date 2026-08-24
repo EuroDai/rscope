@@ -27,7 +27,7 @@ dependencies = [
     "absl-py",
     "numpy",
     "paramiko",
-    "mujoco",
+    "mujoco==3.11.*",
     "watchdog",
 ]
 

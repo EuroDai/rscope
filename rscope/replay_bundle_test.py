@@ -28,7 +28,9 @@ def _write_json(path: Path, value: dict) -> None:
   path.write_text(json.dumps(value), encoding='utf-8')
 
 
-def _create_bundle(root: Path) -> Path:
+def _create_bundle(
+    root: Path, policy_names: tuple[str, ...] = ('student', 'teacher')
+) -> Path:
   model = mujoco.MjModel.from_xml_string(
       "<mujoco><worldbody><body><joint/><geom size='0.1'/>"
       "</body></worldbody></mujoco>"
@@ -42,7 +44,9 @@ def _create_bundle(root: Path) -> Path:
       geom_rgba=np.full_like(model.geom_rgba, 0.5),
   )
   policies = {}
-  for policy_name, length in (('student', 3), ('teacher', 2)):
+  lengths = {'student': 3, 'teacher': 2}
+  for policy_name in policy_names:
+    length = lengths[policy_name]
     policy_root = example_root / policy_name
     states = _write_npz(
         policy_root / 'states.npz',
@@ -125,6 +129,16 @@ class ReplayBundleTest(absltest.TestCase):
           model, result['rollouts'][0]['model_fields']
       )
       np.testing.assert_allclose(model.geom_rgba, 0.5)
+
+  def test_loads_teacher_only_replay(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      _create_bundle(root, ('teacher',))
+      result = replay_bundle.load_bundle(root)
+      loaded = result['rollouts'][0]
+      self.assertEqual(loaded['qpos'].shape[1], 1)
+      self.assertEqual(loaded['reward'].shape[1], 1)
+      self.assertEqual(loaded['env_labels'], ('Teacher',))
 
   def test_rejects_changed_file(self):
     with tempfile.TemporaryDirectory() as directory:
