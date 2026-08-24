@@ -243,6 +243,10 @@ def load_bundle(base_path: str | Path) -> dict[str, Any]:
             'metadata': {
                 **metadata,
                 'selection': example['selection'],
+                'policy_outcomes': {
+                    name: example['policies'][name].get('outcomes', {})
+                    for name in policy_names
+                },
             },
         }
     )

@@ -204,16 +204,34 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
           replay_metadata,
           rollout.rollout_names[viewer_state.cur_eval],
       )
-      text_1 = "Object\nReplay\nPolicy\nStep\nMetrics\nStatus\nSpeed"
-      text_2 = (
-          f"{object_name}\n"
-          f"{rollout.rollout_names[viewer_state.cur_eval]} "
-          f"({viewer_state.cur_eval+1}/{len(rollout.rollouts)})\n"
-          f"{rollout.get_env_label(viewer_state.cur_eval, viewer_state.cur_env)}"
-          "\n"
-          f"{replay_index}\n"
-          f"{metric_status}\n"
+      policy_label = rollout.get_env_label(
+          viewer_state.cur_eval, viewer_state.cur_env
       )
+      selection = replay_metadata.get("selection", {})
+      if rollout.has_bundle_navigation():
+        object_index, object_count, sample_index, sample_count = (
+            rollout.get_bundle_position(viewer_state.cur_eval)
+        )
+        scale = selection.get("scale")
+        scale_text = f" @{float(scale):.2f}" if scale is not None else ""
+        text_1 = "Object\nEpisode\nPolicy\nStep\nMetrics\nStatus\nSpeed"
+        text_2 = (
+            f"{object_index}/{object_count} {object_name}{scale_text}\n"
+            f"{sample_index}/{sample_count}\n"
+            f"{policy_label}\n"
+            f"{replay_index + 1}/{replay_len}\n"
+            f"{metric_status}\n"
+        )
+      else:
+        text_1 = "Object\nReplay\nPolicy\nStep\nMetrics\nStatus\nSpeed"
+        text_2 = (
+            f"{object_name}\n"
+            f"{rollout.rollout_names[viewer_state.cur_eval]} "
+            f"({viewer_state.cur_eval+1}/{len(rollout.rollouts)})\n"
+            f"{policy_label}\n"
+            f"{replay_index}\n"
+            f"{metric_status}\n"
+        )
       text_2 += "Pause" if viewer_state.pause else "Play"
       text_2 += f"\n{viewer_state.playback_speed * 100:.1f}%"
       overlays = [(
@@ -223,13 +241,40 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
           text_2,
       )]
       if replay_metadata:
-        selection = replay_metadata.get("selection", {})
-        info_1 = "Category\nObject\nSeed / Env"
+        group = selection.get("group", selection.get("category", "unknown"))
+        variant_index = selection.get("dataset_variant_index")
+        variant = (
+            f"#{variant_index}" if variant_index is not None else "unknown"
+        )
+        source_rate = selection.get("source_success_rate")
+        source_rate_text = (
+            f"{float(source_rate) * 100:.1f}%"
+            if source_rate is not None
+            else "unknown"
+        )
+        outcomes = replay_metadata.get("policy_outcomes", {}).get(
+            policy_label.lower(), {}
+        )
+        outcome_text = ""
+        if outcomes:
+          outcome_text = "  ".join(
+              f"{label}:{'Y' if outcomes[key] else 'N'}"
+              if key in outcomes
+              else f"{label}:?"
+              for label, key in (
+                  ("G", "grasp_success"),
+                  ("H", "task_hold_success"),
+                  ("F", "final_position_success"),
+              )
+            )
+        info_1 = "Group\nVariant\nSource SR\nSeed / Env\nOutcome"
         info_2 = (
-            f"{selection.get('category', 'unknown')}\n"
-            f"{replay_metadata.get('object_variant_name', 'unknown')}\n"
+            f"{group}\n"
+            f"{variant}\n"
+            f"{source_rate_text}\n"
             f"{replay_metadata.get('batch_seed', '?')} / "
-            f"{replay_metadata.get('env_index', '?')}"
+            f"{replay_metadata.get('env_index', '?')}\n"
+            f"{outcome_text or 'unknown'}"
         )
         overlays.append((
             mujoco.mjtFontScale.mjFONTSCALE_150,
@@ -239,7 +284,9 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
         ))
 
       if viewer_state.show_help:
-        menu_text_1, menu_text_2 = vu.get_menu_text()
+        menu_text_1, menu_text_2 = vu.get_menu_text(
+            bundle_mode=rollout.has_bundle_navigation()
+        )
         overlays.append((
             mujoco.mjtFontScale.mjFONTSCALE_150,
             mujoco.mjtGridPos.mjGRID_BOTTOMLEFT,

@@ -65,10 +65,10 @@ non-pickle NumPy trajectories:
 python -m rscope --path /path/to/replay-bundle
 ```
 
-Bundles may contain Student, Teacher, or paired policies. For paired exports,
-use left/right to switch policies; use up/down to switch replay examples.
-`SHIFT+M` displays scalar trajectory metrics and `SHIFT+O` overlays saved
-point-cloud observations in the MuJoCo scene.
+Bundles may contain Student, Teacher, or paired policies. Use up/down to switch
+objects, left/right to switch saved episodes for the current object, and `P` to
+switch policies. `SHIFT+M` displays scalar trajectory metrics and `SHIFT+O`
+overlays saved point-cloud observations in the MuJoCo scene.
 
 Replay bundles are state playback artifacts. Rscope does not load checkpoints,
 run policies, recompute task success, or integrate the recorded physics again.

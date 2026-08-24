@@ -35,19 +35,31 @@ class ViewerState:
     if keycode == glfw.KEY_RIGHT:
       self.change_rollout = True
       self.cur_metric_page = 0
-      self.cur_env += 1
+      if rollout.has_bundle_navigation():
+        self.cur_eval = rollout.navigate_bundle_sample(self.cur_eval, 1)
+      else:
+        self.cur_env += 1
     elif keycode == glfw.KEY_LEFT:
       self.change_rollout = True
       self.cur_metric_page = 0
-      self.cur_env -= 1
+      if rollout.has_bundle_navigation():
+        self.cur_eval = rollout.navigate_bundle_sample(self.cur_eval, -1)
+      else:
+        self.cur_env -= 1
     elif keycode == glfw.KEY_UP:
       self.change_rollout = True
       self.cur_metric_page = 0
-      self.cur_eval += 1
+      if rollout.has_bundle_navigation():
+        self.cur_eval = rollout.navigate_bundle_object(self.cur_eval, 1)
+      else:
+        self.cur_eval += 1
     elif keycode == glfw.KEY_DOWN:
       self.change_rollout = True
       self.cur_metric_page = 0
-      self.cur_eval -= 1
+      if rollout.has_bundle_navigation():
+        self.cur_eval = rollout.navigate_bundle_object(self.cur_eval, -1)
+      else:
+        self.cur_eval -= 1
     else:
       try:
         char = chr(keycode)
@@ -63,6 +75,10 @@ class ViewerState:
           self.cur_metric_page -= 1
         elif char == "E":
           self.cur_metric_page += 1
+        elif char == "P" and rollout.has_bundle_navigation():
+          self.change_rollout = True
+          self.cur_metric_page = 0
+          self.cur_env += 1
         elif char == "-":
           self.speed_index = min(
               len(self.SPEED_PERCENTAGES) - 1, self.speed_index + 1
@@ -76,4 +92,5 @@ class ViewerState:
 
     # Wrap to valid ranges
     self.cur_eval = (self.cur_eval + rollout.num_evals) % rollout.num_evals
-    self.cur_env = (self.cur_env + rollout.num_envs) % rollout.num_envs
+    current_num_envs = rollout.get_num_envs_for_eval(self.cur_eval)
+    self.cur_env = (self.cur_env + current_num_envs) % current_num_envs

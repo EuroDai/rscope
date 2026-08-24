@@ -18,6 +18,12 @@ class RolloutTest(absltest.TestCase):
     super().setUp()
     # Reset global state before each test
     rollout.rollouts = []
+    rollout.rollout_names = []
+    rollout.rollout_env_labels = []
+    rollout.rollout_metadata = []
+    rollout.bundle_manifest = None
+    rollout.bundle_object_groups = []
+    rollout.bundle_replay_positions = {}
     rollout.num_evals = 0
     rollout.num_envs = 0
     rollout.env_ctrl_dt = 0.0
@@ -182,6 +188,33 @@ class RolloutTest(absltest.TestCase):
         rollout.object_name_from_metadata({}, 'legacy.mj_unroll'),
         'legacy.mj_unroll',
     )
+
+  def test_bundle_navigation_groups_interleaved_samples_by_object(self):
+    rollout.rollout_names = [
+        'object-a/sample-001',
+        'object-b/sample-001',
+        'object-a/sample-002',
+        'object-b/sample-002',
+    ]
+    rollout.rollout_metadata = [
+        {
+            'selection': {
+                'dataset_variant_index': object_index,
+                'sample_index': sample_index,
+            }
+        }
+        for object_index, sample_index in ((10, 0), (20, 0), (10, 1), (20, 1))
+    ]
+    rollout.bundle_manifest = {}
+
+    rollout._rebuild_bundle_navigation()
+
+    self.assertTrue(rollout.has_bundle_navigation())
+    self.assertEqual(rollout.get_bundle_position(0), (1, 2, 1, 2))
+    self.assertEqual(rollout.navigate_bundle_sample(0, 1), 2)
+    self.assertEqual(rollout.navigate_bundle_sample(0, -1), 2)
+    self.assertEqual(rollout.navigate_bundle_object(0, 1), 1)
+    self.assertEqual(rollout.navigate_bundle_object(1, 1), 0)
 
   def test_get_num_metric_pages(self):
     self.assertEqual(0, rollout.get_num_metric_pages({}))

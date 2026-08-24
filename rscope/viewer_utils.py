@@ -18,15 +18,27 @@ def _format_metric_value(data):
   return f'{value:>10}'
 
 
-def get_menu_text():
-  text_1 = (
-      'SHIFT + M\nSHIFT + O\nSPACE\nRIGHT/LEFT\nUP/DOWN\nQ/E\nSHIFT + H\nTAB\n-/+'
-  )
-  text_2 = (
-      'Toggle metrics\nToggle observations\nPause/play\nNext/prev policy\n'
-      'Next/prev replay\nPrev/next metric page\nToggle help\nToggle left UI\n'
-      'Speed down/up'
-  )
+def get_menu_text(bundle_mode: bool = False):
+  if bundle_mode:
+    text_1 = (
+        'SHIFT + M\nSHIFT + O\nSPACE\nRIGHT/LEFT\nUP/DOWN\nP\nQ/E\n'
+        'SHIFT + H\nTAB\n-/+'
+    )
+    text_2 = (
+        'Toggle metrics\nToggle observations\nPause/play\nNext/prev episode\n'
+        'Next/prev object\nNext policy\nPrev/next metric page\nToggle help\n'
+        'Toggle left UI\nSpeed down/up'
+    )
+  else:
+    text_1 = (
+        'SHIFT + M\nSHIFT + O\nSPACE\nRIGHT/LEFT\nUP/DOWN\nQ/E\n'
+        'SHIFT + H\nTAB\n-/+'
+    )
+    text_2 = (
+        'Toggle metrics\nToggle observations\nPause/play\nNext/prev env\n'
+        'Next/prev rollout\nPrev/next metric page\nToggle help\n'
+        'Toggle left UI\nSpeed down/up'
+    )
   return text_1, text_2
 
 
