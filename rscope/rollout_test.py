@@ -167,6 +167,22 @@ class RolloutTest(absltest.TestCase):
         metrics_env['metric3'], metrics['metric3'][:, 1]
     )
 
+  def test_object_name_prefers_readable_bundle_selection(self):
+    metadata = {
+        'object_variant_name': 'core__bottle-deadbeef__s006',
+        'selection': {'object_name': 'core__bottle'},
+    }
+    self.assertEqual(
+        rollout.object_name_from_metadata(metadata, 'sample-001'),
+        'core__bottle',
+    )
+
+  def test_object_name_falls_back_for_legacy_rollout(self):
+    self.assertEqual(
+        rollout.object_name_from_metadata({}, 'legacy.mj_unroll'),
+        'legacy.mj_unroll',
+    )
+
   def test_get_num_metric_pages(self):
     self.assertEqual(0, rollout.get_num_metric_pages({}))
 

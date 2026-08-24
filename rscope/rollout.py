@@ -3,7 +3,7 @@
 from bisect import bisect_right
 from pathlib import Path
 import pickle
-from typing import Dict, List, NamedTuple, Union
+from typing import Dict, List, Mapping, NamedTuple, Union
 
 from absl import logging
 import numpy as np
@@ -133,6 +133,19 @@ def get_env_label(eval_index: int, env_index: int) -> str:
 
 def get_rollout_metadata(eval_index: int) -> Dict:
   return rollout_metadata[eval_index]
+
+
+def object_name_from_metadata(metadata: Mapping, fallback: str) -> str:
+  """Return the readable replay object name for viewer overlays."""
+  selection = metadata.get('selection')
+  if isinstance(selection, Mapping):
+    object_name = selection.get('object_name')
+    if isinstance(object_name, str) and object_name.strip():
+      return object_name
+  variant_name = metadata.get('object_variant_name')
+  if isinstance(variant_name, str) and variant_name.strip():
+    return variant_name
+  return fallback
 
 
 def apply_current_model_fields(model, eval_index: int) -> None:

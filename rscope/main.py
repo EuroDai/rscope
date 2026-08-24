@@ -199,8 +199,14 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
         metric_status = "0/0" if viewer_state.show_metrics else "off"
 
       # Overlay text.
-      text_1 = "Replay\nPolicy\nStep\nMetrics\nStatus\nSpeed"
+      replay_metadata = rollout.get_rollout_metadata(viewer_state.cur_eval)
+      object_name = rollout.object_name_from_metadata(
+          replay_metadata,
+          rollout.rollout_names[viewer_state.cur_eval],
+      )
+      text_1 = "Object\nReplay\nPolicy\nStep\nMetrics\nStatus\nSpeed"
       text_2 = (
+          f"{object_name}\n"
           f"{rollout.rollout_names[viewer_state.cur_eval]} "
           f"({viewer_state.cur_eval+1}/{len(rollout.rollouts)})\n"
           f"{rollout.get_env_label(viewer_state.cur_eval, viewer_state.cur_env)}"
@@ -216,7 +222,6 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
           text_1,
           text_2,
       )]
-      replay_metadata = rollout.get_rollout_metadata(viewer_state.cur_eval)
       if replay_metadata:
         selection = replay_metadata.get("selection", {})
         info_1 = "Category\nObject\nSeed / Env"
