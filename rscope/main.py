@@ -368,6 +368,9 @@ def main(ssh_enabled=False, polling_interval=10, path=None, remote_path=None):
               cur_rollout.obs,
               replay_index,
               visible=viewer_state.show_pixel_obs,
+              visualization=(rollout.bundle_manifest or {}).get(
+                  'visualization'
+              ),
           )
       if not viewer_state.pause:
         replay_index = (replay_index + 1) % replay_len

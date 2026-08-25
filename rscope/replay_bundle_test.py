@@ -59,6 +59,7 @@ def _create_bundle(
         object_target_distance_m=np.linspace(0.1, 0.02, length),
         palm_position_w_m=np.zeros((length, 3)),
         palm_quaternion_wxyz=np.tile((1.0, 0.0, 0.0, 0.0), (length, 1)),
+        target_position_w_m=np.tile((0.4, 0.1, 0.5), (length, 1)),
     )
     record = {'state': states, 'metrics': metrics}
     if policy_name == 'student':
@@ -93,6 +94,16 @@ def _create_bundle(
           'nq': model.nq,
           'nv': model.nv,
       },
+      'visualization': {
+          'point_cloud': {
+              'radius_m': 0.002,
+              'rgba': [0.0, 0.8, 1.0, 0.9],
+          },
+          'target': {
+              'radius_m': 0.03,
+              'rgba': [1.0, 0.5, 0.0, 0.3],
+          },
+      },
       'examples': [
           {
               'name': 'both-success',
@@ -117,6 +128,7 @@ class ReplayBundleTest(absltest.TestCase):
       self.assertEqual(loaded['env_labels'], ('Student', 'Teacher'))
       self.assertTrue(loaded['obs']['point_mask'][:, 0].all())
       self.assertFalse(loaded['obs']['point_mask'][:, 1].any())
+      self.assertIn('target_position_w_m', loaded['obs'])
       self.assertIn('object_target_distance_m', loaded['metrics'])
 
   def test_applies_model_patch(self):
@@ -178,6 +190,55 @@ class ReplayBundleTest(absltest.TestCase):
     self.assertEqual(count, 1)
     self.assertEqual(scene.ngeom, 1)
     np.testing.assert_allclose(scene.geoms[0].pos, (0.0, 2.0, 0.0))
+
+  def test_target_and_point_cloud_share_shift_o_overlay(self):
+    model = mujoco.MjModel.from_xml_string('<mujoco/>')
+    scene = mujoco.MjvScene(model, maxgeom=8)
+    count = point_cloud.update(
+        scene,
+        {
+            'point_cloud_palm_m': np.asarray([[[0.0, 0.0, 0.0]]]),
+            'point_mask': np.asarray([[True]]),
+            'point_cloud_frame_position_w_m': np.asarray(
+                [[0.0, 2.0, 0.0]]
+            ),
+            'point_cloud_frame_quaternion_wxyz': np.asarray(
+                [[1.0, 0.0, 0.0, 0.0]]
+            ),
+            'target_position_w_m': np.asarray([[0.4, 0.1, 0.5]]),
+        },
+        0,
+        visible=True,
+        visualization={
+            'point_cloud': {
+                'radius_m': 0.002,
+                'rgba': [0.0, 0.8, 1.0, 0.9],
+            },
+            'target': {
+                'radius_m': 0.03,
+                'rgba': [1.0, 0.5, 0.0, 0.3],
+            },
+        },
+    )
+    self.assertEqual(count, 2)
+    np.testing.assert_allclose(scene.geoms[0].pos, (0.4, 0.1, 0.5))
+    np.testing.assert_allclose(scene.geoms[0].size, (0.03, 0.03, 0.03))
+    np.testing.assert_allclose(scene.geoms[0].rgba, (1.0, 0.5, 0.0, 0.3))
+    np.testing.assert_allclose(scene.geoms[1].pos, (0.0, 2.0, 0.0))
+    np.testing.assert_allclose(scene.geoms[1].size, (0.002, 0.002, 0.002))
+    np.testing.assert_allclose(scene.geoms[1].rgba, (0.0, 0.8, 1.0, 0.9))
+
+  def test_target_renders_without_saved_point_cloud(self):
+    model = mujoco.MjModel.from_xml_string('<mujoco/>')
+    scene = mujoco.MjvScene(model, maxgeom=1)
+    count = point_cloud.update(
+        scene,
+        {'target_position_w_m': np.asarray([[0.4, 0.1, 0.5]])},
+        0,
+        visible=True,
+    )
+    self.assertEqual(count, 1)
+    np.testing.assert_allclose(scene.geoms[0].pos, (0.4, 0.1, 0.5))
 
 
 if __name__ == '__main__':

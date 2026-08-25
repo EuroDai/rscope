@@ -219,6 +219,7 @@ def load_bundle(base_path: str | Path) -> dict[str, Any]:
         ('palm_position_w_m', 'point_cloud_frame_position_w_m'),
         ('palm_quaternion_wxyz', 'point_cloud_frame_quaternion_wxyz'),
         ('object_position_w_m', 'replay_focus_position_w_m'),
+        ('target_position_w_m', 'target_position_w_m'),
     ):
       if any(source_name in value for value in metric_values):
         observations[observation_name] = _stack_policy_arrays(

@@ -68,7 +68,9 @@ python -m rscope --path /path/to/replay-bundle
 Bundles may contain Student, Teacher, or paired policies. Use up/down to switch
 objects, left/right to switch saved episodes for the current object, and `P` to
 switch policies. `SHIFT+M` displays scalar trajectory metrics and `SHIFT+O`
-overlays saved point-cloud observations in the MuJoCo scene.
+overlays the saved target and current policy's point-cloud observations in the
+MuJoCo scene. New bundles can provide shared target and point-cloud styles;
+older bundles use compatible defaults.
 
 Replay bundles are state playback artifacts. Rscope does not load checkpoints,
 run policies, recompute task success, or integrate the recorded physics again.
